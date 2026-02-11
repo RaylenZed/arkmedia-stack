@@ -24,7 +24,8 @@
   - 一键安装 Jellyfin / qBittorrent / Portainer / Watchtower
   - 一键安装“影视套件”（Jellyfin + qBittorrent + Watchtower）
   - 启动/停止/重启/卸载
-  - 任务中心（进度条、状态、失败原因、任务日志、失败重试）
+  - 任务中心（进度条、状态、失败原因、任务日志、失败重试、重试来源）
+  - 安装/重启后自动验收（容器状态 + 服务就绪检测）
   - 支持在设置页配置安装目录和端口
 - SSL 管理面板
   - Cloudflare DNS Challenge 签发证书

@@ -615,6 +615,16 @@ async function renderApps() {
             ? "运行中"
             : "已安装（未运行）"
           : "未安装";
+        const healthText =
+          app.health === "healthy" || app.health === "running"
+            ? "健康"
+            : app.health === "stopped"
+              ? "未运行"
+              : app.health === "unhealthy"
+                ? "异常"
+                : app.health === "not_installed"
+                  ? "未安装"
+                  : app.health || "未知";
 
         const openUrl = app.openPortKey
           ? `http://${location.hostname}:${integrations[app.openPortKey]}`
@@ -629,6 +639,7 @@ async function renderApps() {
             <p class="text-muted">分类：${app.category || "-"}</p>
             <p class="text-muted">容器名：${app.containerName}</p>
             <p>状态：${statusText}</p>
+            <p>健康：${healthText}${app.health_error ? `（${app.health_error}）` : ""}</p>
             ${
               activeTask
                 ? `<div class="list-item"><div class="list-title">任务 #${activeTask.id} ${activeTask.action}</div><div class="text-muted">${activeTask.message || ""}</div><div class="progress"><span style="width:${activeTask.progress}%"></span></div></div>`
@@ -667,7 +678,7 @@ async function renderApps() {
         <h3>任务中心</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>ID</th><th>应用</th><th>动作</th><th>状态</th><th>进度</th><th>信息</th><th>错误</th><th>时间</th><th>操作</th></tr></thead>
+            <thead><tr><th>ID</th><th>应用</th><th>动作</th><th>状态</th><th>进度</th><th>信息</th><th>错误</th><th>来源</th><th>时间</th><th>操作</th></tr></thead>
             <tbody>
               ${
                 tasks
@@ -680,6 +691,7 @@ async function renderApps() {
                       <td>${t.progress}%</td>
                       <td>${t.message || "-"}</td>
                       <td>${t.error_detail || "-"}</td>
+                      <td>${t.retried_from ? `重试 #${t.retried_from}` : "-"}</td>
                       <td>${formatDate(t.created_at)}</td>
                       <td>
                         <div class="actions">
@@ -693,7 +705,7 @@ async function renderApps() {
                       </td>
                     </tr>`
                   )
-                  .join("") || "<tr><td colspan='9'>暂无任务</td></tr>"
+                  .join("") || "<tr><td colspan='10'>暂无任务</td></tr>"
               }
             </tbody>
           </table>

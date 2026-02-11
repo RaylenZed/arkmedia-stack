@@ -70,6 +70,8 @@ const BUNDLE_DEFINITIONS = {
 };
 
 const runningTasks = new Set();
+const DEFAULT_HTTP_READY_TIMEOUT_MS = 90000;
+const DEFAULT_HTTP_READY_INTERVAL_MS = 1500;
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -77,6 +79,24 @@ function ensureDir(dirPath) {
 
 function normalizeHostPath(p) {
   return path.resolve(String(p || "").trim());
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(url, timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function getAppDef(appId) {
@@ -102,6 +122,25 @@ async function findContainerByName(name) {
   return docker.getContainer(summary.Id);
 }
 
+async function readContainerHealthInfo(name) {
+  const container = await findContainerByName(name);
+  if (!container) return { health: "not_installed", state: "missing" };
+  try {
+    const inspect = await container.inspect();
+    const state = inspect?.State?.Status || "unknown";
+    const dockerHealth = inspect?.State?.Health?.Status;
+    const health = dockerHealth || (inspect?.State?.Running ? "running" : "stopped");
+    return {
+      health,
+      state,
+      startedAt: inspect?.State?.StartedAt || "",
+      error: inspect?.State?.Error || ""
+    };
+  } catch {
+    return { health: "unknown", state: "unknown" };
+  }
+}
+
 async function pullImage(image, onProgress) {
   return new Promise((resolve, reject) => {
     docker.pull(image, (err, stream) => {
@@ -118,6 +157,159 @@ async function pullImage(image, onProgress) {
       );
     });
   });
+}
+
+async function ensureManagedNetwork(taskId) {
+  const network = docker.getNetwork(config.internalNetwork);
+  try {
+    await network.inspect();
+    appendTaskLog(taskId, `网络检查通过：${config.internalNetwork}`);
+    return;
+  } catch (err) {
+    if (err?.statusCode && err.statusCode !== 404) {
+      throw err;
+    }
+  }
+
+  appendTaskLog(taskId, `未找到网络 ${config.internalNetwork}，正在创建`);
+  try {
+    await docker.createNetwork({
+      Name: config.internalNetwork,
+      Driver: "bridge",
+      Labels: {
+        "arknas.managed": "true"
+      }
+    });
+    appendTaskLog(taskId, `网络已创建：${config.internalNetwork}`);
+  } catch (err) {
+    if (String(err?.message || "").includes("already exists")) {
+      appendTaskLog(taskId, `网络已存在：${config.internalNetwork}`);
+      return;
+    }
+    throw err;
+  }
+}
+
+async function ensureContainerRunning(appId, taskId, timeoutMs = 30000) {
+  const appDef = getAppDef(appId);
+  const deadline = Date.now() + timeoutMs;
+  let lastState = "unknown";
+
+  while (Date.now() < deadline) {
+    const container = await findContainerByName(appDef.containerName);
+    if (container) {
+      const inspect = await container.inspect();
+      const state = inspect?.State?.Status || "unknown";
+      lastState = state;
+      if (inspect?.State?.Running) {
+        appendTaskLog(taskId, `${appDef.name} 容器运行状态正常`);
+        return true;
+      }
+    }
+    await sleep(900);
+  }
+
+  throw new HttpError(502, `${appDef.name} 启动超时，容器状态：${lastState}`);
+}
+
+async function ensureHttpReady({
+  appName,
+  taskId,
+  host,
+  port,
+  paths = ["/"],
+  timeoutMs = DEFAULT_HTTP_READY_TIMEOUT_MS,
+  intervalMs = DEFAULT_HTTP_READY_INTERVAL_MS
+}) {
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+  let lastError = "unknown";
+
+  while (Date.now() < deadline) {
+    attempt += 1;
+    for (const p of paths) {
+      const url = `http://${host}:${port}${p}`;
+      try {
+        const res = await fetchWithTimeout(url, 3000);
+        if (res.status >= 200 && res.status < 500) {
+          appendTaskLog(taskId, `${appName} 就绪检查通过：${p} -> HTTP ${res.status}（第 ${attempt} 次）`);
+          return true;
+        }
+        lastError = `HTTP ${res.status}`;
+      } catch (err) {
+        lastError = err?.name === "AbortError" ? "timeout" : String(err?.message || err);
+      }
+    }
+
+    if (attempt === 1 || attempt % 5 === 0) {
+      appendTaskLog(taskId, `${appName} 就绪检查中（第 ${attempt} 次），最近错误：${lastError}`);
+    }
+    await sleep(intervalMs);
+  }
+
+  throw new HttpError(502, `${appName} 就绪检查失败：${lastError}`);
+}
+
+async function ensureDockerProxyReady(taskId) {
+  try {
+    const res = await fetchWithTimeout("http://docker-proxy:2375/_ping", 3000);
+    const text = await res.text();
+    if (!res.ok || text.trim() !== "OK") {
+      throw new Error(`status=${res.status}, body=${text.slice(0, 50)}`);
+    }
+    appendTaskLog(taskId, "docker-proxy 连通性检查通过");
+  } catch (err) {
+    throw new HttpError(502, `docker-proxy 不可用：${err?.message || err}`);
+  }
+}
+
+async function runPostInstallValidation(appId, taskId, cfg) {
+  const appDef = getAppDef(appId);
+  appendTaskLog(taskId, `${appDef.name} 启动后验收中`);
+  await ensureContainerRunning(appId, taskId, 30000);
+
+  if (appId === "watchtower") {
+    await ensureDockerProxyReady(taskId);
+    return { ok: true, type: "runtime" };
+  }
+
+  if (appId === "jellyfin") {
+    await ensureHttpReady({
+      appName: appDef.name,
+      taskId,
+      host: appDef.containerName,
+      port: 8096,
+      paths: ["/health", "/web/index.html", "/"],
+      timeoutMs: 120000
+    });
+    return { ok: true, type: "http" };
+  }
+
+  if (appId === "qbittorrent") {
+    await ensureHttpReady({
+      appName: appDef.name,
+      taskId,
+      host: appDef.containerName,
+      port: Number(cfg.qbWebPort),
+      paths: ["/api/v2/app/version", "/"],
+      timeoutMs: 90000
+    });
+    return { ok: true, type: "http" };
+  }
+
+  if (appId === "portainer") {
+    await ensureHttpReady({
+      appName: appDef.name,
+      taskId,
+      host: appDef.containerName,
+      port: 9000,
+      paths: ["/api/status", "/"],
+      timeoutMs: 90000
+    });
+    return { ok: true, type: "http" };
+  }
+
+  return { ok: true, type: "runtime" };
 }
 
 function buildStatus(appDef, containerInfo, cfg) {
@@ -304,6 +496,10 @@ async function runInstall(appId, taskId, options = {}) {
   }
 
   const cfg = getRawIntegrationConfig();
+  updateAppTask(taskId, { progress: 12, message: "检查安装环境" });
+  await ensureManagedNetwork(taskId);
+
+  updateAppTask(taskId, { progress: 24, message: "拉取镜像" });
   appendTaskLog(taskId, `开始拉取镜像 ${appDef.image}`);
   await pullImage(appDef.image, (event) => {
     if (!event) return;
@@ -312,14 +508,18 @@ async function runInstall(appId, taskId, options = {}) {
     }
   });
 
-  updateAppTask(taskId, { progress: 45, message: "创建容器" });
+  updateAppTask(taskId, { progress: 50, message: "创建容器" });
   const createOptions = buildAppCreateOptions(appId, cfg);
   const container = await docker.createContainer(createOptions);
   appendTaskLog(taskId, `容器已创建 ${container.id.slice(0, 12)}`);
 
-  updateAppTask(taskId, { progress: 72, message: "启动容器" });
+  updateAppTask(taskId, { progress: 70, message: "启动容器" });
   await container.start();
   appendTaskLog(taskId, `${appDef.name} 已启动`);
+
+  updateAppTask(taskId, { progress: 84, message: "安装后验收" });
+  await runPostInstallValidation(appId, taskId, cfg);
+  appendTaskLog(taskId, `${appDef.name} 验收通过`);
 
   const updates = {};
   if (appId === "jellyfin" && !cfg.jellyfinBaseUrl) {
@@ -329,6 +529,7 @@ async function runInstall(appId, taskId, options = {}) {
     updates.qbBaseUrl = `http://127.0.0.1:${cfg.qbWebPort}`;
   }
   if (Object.keys(updates).length > 0) {
+    updateAppTask(taskId, { progress: 92, message: "同步集成配置" });
     saveIntegrations(updates);
   }
 
@@ -342,13 +543,25 @@ async function runInstall(appId, taskId, options = {}) {
 
 async function runControl(appId, action, taskId) {
   const appDef = getAppDef(appId);
+  const cfg = getRawIntegrationConfig();
   const container = await findContainerByName(appDef.containerName);
   if (!container) throw new HttpError(404, `${appDef.name} 未安装`);
 
   appendTaskLog(taskId, `${appDef.name} 执行 ${action}`);
-  if (action === "start") await container.start();
-  else if (action === "stop") await container.stop();
-  else if (action === "restart") await container.restart();
+  if (action === "start") {
+    updateAppTask(taskId, { progress: 45, message: "启动容器" });
+    await container.start();
+    updateAppTask(taskId, { progress: 78, message: "启动后验收" });
+    await runPostInstallValidation(appId, taskId, cfg);
+  } else if (action === "stop") {
+    updateAppTask(taskId, { progress: 45, message: "停止容器" });
+    await container.stop();
+  } else if (action === "restart") {
+    updateAppTask(taskId, { progress: 45, message: "重启容器" });
+    await container.restart();
+    updateAppTask(taskId, { progress: 78, message: "重启后验收" });
+    await runPostInstallValidation(appId, taskId, cfg);
+  }
   else throw new HttpError(400, "不支持的操作");
 
   appendTaskLog(taskId, `${appDef.name} ${action} 完成`);
@@ -384,7 +597,7 @@ async function runActionWithProgress(taskId, appId, action, options = {}) {
   if (action === "install") {
     markTaskRunning(taskId, 8, "检查安装状态");
     const result = await runInstall(appId, taskId, options);
-    updateAppTask(taskId, { progress: 95, message: "完成容器启动" });
+    updateAppTask(taskId, { progress: 96, message: "安装验收完成" });
     return result;
   }
 
@@ -397,7 +610,7 @@ async function runActionWithProgress(taskId, appId, action, options = {}) {
 
   markTaskRunning(taskId, 20, `执行 ${action}`);
   const result = await runControl(appId, action, taskId);
-  updateAppTask(taskId, { progress: 95, message: "操作完成" });
+  updateAppTask(taskId, { progress: 96, message: "操作完成" });
   return result;
 }
 
@@ -405,18 +618,24 @@ async function runBundleInstall(taskId, bundleId) {
   const bundle = getBundleDef(bundleId);
   markTaskRunning(taskId, 5, `开始安装套件：${bundle.name}`);
   appendTaskLog(taskId, `套件包含：${bundle.apps.join(", ")}`);
+  const installed = [];
+  const skipped = [];
 
   for (let i = 0; i < bundle.apps.length; i += 1) {
     const appId = bundle.apps[i];
-    const percentBase = 10 + Math.floor((i / bundle.apps.length) * 75);
-    updateAppTask(taskId, { progress: percentBase, message: `安装 ${appId}` });
+    const percentBase = 10 + Math.floor((i / bundle.apps.length) * 80);
+    const percentDone = 10 + Math.floor(((i + 1) / bundle.apps.length) * 80);
+    updateAppTask(taskId, { progress: percentBase, message: `安装 ${appId}（${i + 1}/${bundle.apps.length}）` });
     appendTaskLog(taskId, `安装子应用 ${appId}`);
-    await runInstall(appId, taskId, { skipIfInstalled: true });
+    const result = await runInstall(appId, taskId, { skipIfInstalled: true });
+    if (result.skipped) skipped.push(appId);
+    else installed.push(appId);
+    updateAppTask(taskId, { progress: percentDone, message: `${appId} 已处理` });
   }
 
   updateAppTask(taskId, { progress: 96, message: "套件安装完成" });
-  appendTaskLog(taskId, "套件安装全部完成");
-  return { ok: true, bundleId, message: `${bundle.name} 安装完成` };
+  appendTaskLog(taskId, `套件安装完成，新增：${installed.join(", ") || "无"}；跳过：${skipped.join(", ") || "无"}`);
+  return { ok: true, bundleId, installed, skipped, message: `${bundle.name} 安装完成` };
 }
 
 function scheduleTask(taskId, appId, action, actor, options = {}) {
@@ -492,7 +711,22 @@ export async function listManagedApps() {
     keys.map(async (key) => {
       const app = APP_DEFINITIONS[key];
       const container = await findContainerSummaryByName(app.containerName);
-      return buildStatus(app, container, cfg);
+      const base = buildStatus(app, container, cfg);
+      if (!base.installed) {
+        return {
+          ...base,
+          health: "not_installed",
+          health_state: "missing"
+        };
+      }
+      const health = await readContainerHealthInfo(app.containerName);
+      return {
+        ...base,
+        health: health.health,
+        health_state: health.state,
+        health_error: health.error || "",
+        started_at: health.startedAt || ""
+      };
     })
   );
 
