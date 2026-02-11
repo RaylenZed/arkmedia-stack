@@ -6,17 +6,21 @@ const state = {
   user: null,
   page: "dashboard",
   refreshTimer: null,
-  modalTimer: null
+  modalTimer: null,
+  dockerTab: "containers",
+  downloadsFilter: "all",
+  downloadsDetailHash: "",
+  systemMenu: "device"
 };
 
 const PAGE_TITLES = {
-  dashboard: "总览",
-  containers: "容器管理",
-  media: "影视管理",
+  dashboard: "仪表盘",
+  containers: "Docker 中心",
+  media: "影视",
   downloads: "下载管理",
   apps: "应用中心",
-  ssl: "SSL 管理",
-  settings: "设置"
+  ssl: "SSL 证书",
+  settings: "系统设置"
 };
 
 const appEl = document.getElementById("app");
@@ -319,56 +323,224 @@ async function renderDashboard() {
 
 async function renderContainers() {
   try {
-    const data = await api("/api/containers/summary");
-    const list = data.containers || [];
+    const tabs = [
+      { id: "containers", label: "容器" },
+      { id: "compose", label: "Compose 项目" },
+      { id: "images", label: "本地镜像" },
+      { id: "registry", label: "镜像仓库" },
+      { id: "networks", label: "网络" }
+    ];
+
+    let bodyHtml = "";
+
+    if (state.dockerTab === "containers") {
+      const data = await api("/api/containers/summary");
+      const list = data.containers || [];
+      bodyHtml = `
+        <section class="card">
+          <div class="actions" style="justify-content: space-between;">
+            <div class="text-muted">总计 ${data.summary.total}，运行 ${data.summary.running}，停止 ${data.summary.stopped}，异常 ${data.summary.error}</div>
+            <button id="reloadContainers" class="btn btn-secondary">刷新列表</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>容器</th><th>项目</th><th>状态</th><th>CPU</th><th>内存</th><th>网络</th><th>端口</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${list
+                  .map(
+                    (c) => `
+                      <tr>
+                        <td>${c.name}<div class="text-muted">${c.image}</div></td>
+                        <td>${c.project}</td>
+                        <td><span class="status-dot ${statusClass(c.state)}"></span>${c.status}</td>
+                        <td>${c.metrics.cpuPercent}%</td>
+                        <td>${formatBytes(c.metrics.memoryBytes)}</td>
+                        <td>↓${formatSpeed(c.metrics.netInBytes)}<br />↑${formatSpeed(c.metrics.netOutBytes)}</td>
+                        <td>${(c.ports || [])
+                          .map((p) => `${p.publicPort || "-"}:${p.privatePort}/${p.type}`)
+                          .join("<br />")}</td>
+                        <td>
+                          <div class="actions">
+                            <button class="btn btn-secondary" data-action="start" data-id="${c.id}">启动</button>
+                            <button class="btn btn-secondary" data-action="stop" data-id="${c.id}">停止</button>
+                            <button class="btn btn-secondary" data-action="restart" data-id="${c.id}">重启</button>
+                            <button class="btn btn-secondary" data-action="logs" data-id="${c.id}" data-name="${c.name}">日志</button>
+                            <button class="btn btn-danger" data-action="update" data-id="${c.id}">更新</button>
+                          </div>
+                        </td>
+                      </tr>
+                    `
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.dockerTab === "compose") {
+      const projects = await api("/api/containers/compose/projects");
+      bodyHtml = `
+        <section class="card">
+          <h3>Compose 项目管理</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>项目</th><th>服务数</th><th>容器</th><th>运行</th><th>停止</th><th>操作</th></tr></thead>
+              <tbody>
+                ${projects
+                  .map(
+                    (p) => `
+                      <tr>
+                        <td>${p.name}<div class="text-muted">${p.services.join(", ") || "-"}</div></td>
+                        <td>${p.services.length}</td>
+                        <td>${p.total}</td>
+                        <td>${p.running}</td>
+                        <td>${p.stopped}</td>
+                        <td>
+                          <div class="actions">
+                            <button class="btn btn-secondary" data-compose-action="start" data-project="${p.name}">启动</button>
+                            <button class="btn btn-secondary" data-compose-action="stop" data-project="${p.name}">停止</button>
+                            <button class="btn btn-secondary" data-compose-action="restart" data-project="${p.name}">重启</button>
+                          </div>
+                        </td>
+                      </tr>
+                    `
+                  )
+                  .join("") || "<tr><td colspan='6'>未发现 Compose 项目</td></tr>"}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.dockerTab === "images") {
+      const images = await api("/api/containers/images");
+      bodyHtml = `
+        <section class="card">
+          <div class="actions" style="justify-content: space-between;">
+            <h3 style="margin:0;">本地镜像</h3>
+            <div class="actions">
+              <input id="pullImageInput" placeholder="例如: nginx:latest" />
+              <button id="pullImageBtn" class="btn btn-primary">拉取镜像</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>标签</th><th>ID</th><th>大小</th><th>容器占用</th><th>创建时间</th><th>操作</th></tr></thead>
+              <tbody>
+                ${images
+                  .map(
+                    (img) => `
+                      <tr>
+                        <td>${(img.tags || []).join("<br />") || "<none>"}</td>
+                        <td>${img.shortId}</td>
+                        <td>${formatBytes(img.size)}</td>
+                        <td>${img.containers}</td>
+                        <td>${formatDate(img.createdAt)}</td>
+                        <td><button class="btn btn-danger" data-image-remove="${img.id}">删除</button></td>
+                      </tr>
+                    `
+                  )
+                  .join("") || "<tr><td colspan='6'>暂无镜像</td></tr>"}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.dockerTab === "registry") {
+      bodyHtml = `
+        <section class="card">
+          <div class="actions">
+            <input id="registrySearchInput" placeholder="搜索 Docker Hub 镜像，例如 jellyfin" />
+            <button id="registrySearchBtn" class="btn btn-primary">搜索</button>
+          </div>
+          <div id="registrySearchResult" class="list" style="margin-top: 10px;"></div>
+        </section>
+      `;
+    }
+
+    if (state.dockerTab === "networks") {
+      const [networks, containerSummary] = await Promise.all([
+        api("/api/containers/networks"),
+        api("/api/containers/summary")
+      ]);
+
+      const options = (containerSummary.containers || [])
+        .map((c) => `<option value="${c.id}">${c.name}</option>`)
+        .join("");
+
+      bodyHtml = `
+        <section class="card">
+          <div class="actions" style="justify-content: space-between;">
+            <h3 style="margin:0;">网络管理</h3>
+            <div class="actions">
+              <input id="networkNameInput" placeholder="新网络名称" />
+              <button id="networkCreateBtn" class="btn btn-primary">新建网络</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>名称</th><th>驱动</th><th>容器数</th><th>容器管理</th><th>操作</th></tr></thead>
+              <tbody>
+                ${networks
+                  .map(
+                    (n) => `
+                      <tr>
+                        <td>${n.name}</td>
+                        <td>${n.driver}</td>
+                        <td>${n.containerCount}</td>
+                        <td>
+                          <div class="actions">
+                            <select data-network-container="${n.id}">
+                              <option value="">选择容器</option>
+                              ${options}
+                            </select>
+                            <button class="btn btn-secondary" data-network-action="connect" data-network-id="${n.id}">加入</button>
+                            <button class="btn btn-secondary" data-network-action="disconnect" data-network-id="${n.id}">移出</button>
+                          </div>
+                        </td>
+                        <td>
+                          <button class="btn btn-danger" data-network-remove="${n.id}">删除</button>
+                        </td>
+                      </tr>
+                    `
+                  )
+                  .join("") || "<tr><td colspan='5'>暂无网络</td></tr>"}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    }
 
     pageContentEl.innerHTML = `
       <section class="card">
-        <div class="actions" style="justify-content: space-between;">
-          <div class="text-muted">总计 ${data.summary.total}，运行 ${data.summary.running}，停止 ${data.summary.stopped}，异常 ${data.summary.error}</div>
-          <button id="reloadContainers" class="btn btn-secondary">刷新列表</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>容器</th><th>项目</th><th>状态</th><th>CPU</th><th>内存</th><th>网络</th><th>端口</th><th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${list
-                .map(
-                  (c) => `
-                    <tr>
-                      <td>${c.name}<div class="text-muted">${c.image}</div></td>
-                      <td>${c.project}</td>
-                      <td><span class="status-dot ${statusClass(c.state)}"></span>${c.status}</td>
-                      <td>${c.metrics.cpuPercent}%</td>
-                      <td>${formatBytes(c.metrics.memoryBytes)}</td>
-                      <td>↓${formatSpeed(c.metrics.netInBytes)}<br />↑${formatSpeed(c.metrics.netOutBytes)}</td>
-                      <td>${(c.ports || [])
-                        .map((p) => `${p.publicPort || "-"}:${p.privatePort}/${p.type}`)
-                        .join("<br />")}</td>
-                      <td>
-                        <div class="actions">
-                          <button class="btn btn-secondary" data-action="start" data-id="${c.id}">启动</button>
-                          <button class="btn btn-secondary" data-action="stop" data-id="${c.id}">停止</button>
-                          <button class="btn btn-secondary" data-action="restart" data-id="${c.id}">重启</button>
-                          <button class="btn btn-secondary" data-action="logs" data-id="${c.id}" data-name="${c.name}">日志</button>
-                          <button class="btn btn-danger" data-action="update" data-id="${c.id}">更新</button>
-                        </div>
-                      </td>
-                    </tr>
-                  `
-                )
-                .join("")}
-            </tbody>
-          </table>
+        <div class="pill-tabs">
+          ${tabs
+            .map(
+              (t) =>
+                `<button class="pill-tab ${state.dockerTab === t.id ? "active" : ""}" data-docker-tab="${t.id}">${t.label}</button>`
+            )
+            .join("")}
         </div>
       </section>
+      ${bodyHtml}
     `;
 
-    document.getElementById("reloadContainers").addEventListener("click", renderContainers);
+    pageContentEl.querySelectorAll("[data-docker-tab]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        state.dockerTab = btn.dataset.dockerTab;
+        await renderContainers();
+      });
+    });
 
     pageContentEl.querySelectorAll("button[data-action]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -402,6 +574,147 @@ async function renderContainers() {
         }
       });
     });
+
+    pageContentEl.querySelectorAll("[data-compose-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          const project = btn.dataset.project;
+          const action = btn.dataset.composeAction;
+          await api(`/api/containers/compose/projects/${encodeURIComponent(project)}/${action}`, {
+            method: "POST"
+          });
+          showToast(`项目 ${action} 完成`);
+          await renderContainers();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    const pullBtn = document.getElementById("pullImageBtn");
+    if (pullBtn) {
+      pullBtn.addEventListener("click", async () => {
+        try {
+          const image = document.getElementById("pullImageInput").value.trim();
+          await api("/api/containers/images/pull", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image })
+          });
+          showToast("镜像拉取成功");
+          await renderContainers();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
+
+    pageContentEl.querySelectorAll("[data-image-remove]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          const id = btn.dataset.imageRemove;
+          await api(`/api/containers/images/${encodeURIComponent(id)}?force=1`, { method: "DELETE" });
+          showToast("镜像删除成功");
+          await renderContainers();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    const registryBtn = document.getElementById("registrySearchBtn");
+    if (registryBtn) {
+      registryBtn.addEventListener("click", async () => {
+        try {
+          const q = document.getElementById("registrySearchInput").value.trim();
+          const result = await api(`/api/containers/registry/search?q=${encodeURIComponent(q)}&limit=20`);
+          const box = document.getElementById("registrySearchResult");
+          box.innerHTML =
+            result.results
+              .map(
+                (r) => `<div class="list-item">
+                  <div class="list-title">${r.name}</div>
+                  <div class="text-muted">${r.shortDescription || "-"}</div>
+                  <div class="text-muted">⭐ ${r.starCount} · Pulls ${r.pullCount}</div>
+                  <button class="btn btn-secondary" data-registry-pull="${r.name}">拉取</button>
+                </div>`
+              )
+              .join("") || '<div class="text-muted">无结果</div>';
+
+          box.querySelectorAll("[data-registry-pull]").forEach((btn) => {
+            btn.addEventListener("click", async () => {
+              const image = btn.dataset.registryPull;
+              try {
+                await api("/api/containers/images/pull", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ image })
+                });
+                showToast(`已拉取 ${image}`);
+              } catch (err) {
+                showToast(err.message);
+              }
+            });
+          });
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
+
+    const createNetworkBtn = document.getElementById("networkCreateBtn");
+    if (createNetworkBtn) {
+      createNetworkBtn.addEventListener("click", async () => {
+        try {
+          const name = document.getElementById("networkNameInput").value.trim();
+          await api("/api/containers/networks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, driver: "bridge", attachable: true })
+          });
+          showToast("网络已创建");
+          await renderContainers();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
+
+    pageContentEl.querySelectorAll("[data-network-remove]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/containers/networks/${btn.dataset.networkRemove}`, { method: "DELETE" });
+          showToast("网络已删除");
+          await renderContainers();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    pageContentEl.querySelectorAll("[data-network-action]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          const networkId = btn.dataset.networkId;
+          const action = btn.dataset.networkAction;
+          const select = pageContentEl.querySelector(`[data-network-container="${networkId}"]`);
+          const containerId = select?.value || "";
+          if (!containerId) {
+            showToast("请先选择容器");
+            return;
+          }
+          await api(`/api/containers/networks/${networkId}/${action}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ containerId, force: true })
+          });
+          showToast("网络操作成功");
+          await renderContainers();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
   } catch (err) {
     pageContentEl.innerHTML = `<div class="card">加载失败：${err.message}</div>`;
   }
@@ -409,11 +722,30 @@ async function renderContainers() {
 
 async function renderMedia() {
   try {
-    const data = await api("/api/media/summary");
+    const [data, integrations] = await Promise.all([
+      api("/api/media/summary"),
+      api("/api/settings/integrations")
+    ]);
     const cw = data.continueWatching || [];
     const latest = data.latest || [];
     const sessions = data.sessions || [];
     const notConfigured = data.configured === false;
+    const baseUrl = String(integrations.jellyfinBaseUrl || "").replace(/\/$/, "");
+    const latestCards = latest.map((item) => {
+      const detailUrl = baseUrl ? `${baseUrl}/web/index.html#!/details?id=${item.Id}` : "#";
+      return `
+        <div class="list-item">
+          ${
+            item.imageUrl
+              ? `<img src="${item.imageUrl}" alt="${item.Name || ""}" style="width:100%;height:120px;object-fit:cover;border-radius:10px;" />`
+              : ""
+          }
+          <div class="list-title">${item.Name || "未命名"}</div>
+          <div class="text-muted">${item.Type || "-"} · ${formatDate(item.DateCreated)}</div>
+          ${baseUrl ? `<a class="btn btn-secondary" href="${detailUrl}" target="_blank">打开详情</a>` : ""}
+        </div>
+      `;
+    });
 
     pageContentEl.innerHTML = `
       <section class="card">
@@ -433,19 +765,23 @@ async function renderMedia() {
           <div class="list">
             ${cw
               .map(
-                (item) => `<div class="list-item"><div class="list-title">${item.Name || "未命名"}</div><div class="text-muted">进度 ${(item.UserData?.PlayedPercentage || 0).toFixed(1)}%</div></div>`
+                (item) => `<div class="list-item">
+                  <div class="list-title">${item.Name || "未命名"}</div>
+                  <div class="text-muted">进度 ${(item.UserData?.PlayedPercentage || 0).toFixed(1)}%</div>
+                  ${
+                    baseUrl
+                      ? `<a class="btn btn-secondary" href="${baseUrl}/web/index.html#!/details?id=${item.Id}" target="_blank">继续播放</a>`
+                      : ""
+                  }
+                </div>`
               )
               .join("") || '<div class="text-muted">暂无数据</div>'}
           </div>
         </div>
         <div class="card">
           <h3>最近添加</h3>
-          <div class="list">
-            ${latest
-              .map(
-                (item) => `<div class="list-item"><div class="list-title">${item.Name || "未命名"}</div><div class="text-muted">${item.Type || "-"} · ${formatDate(item.DateCreated)}</div></div>`
-              )
-              .join("") || '<div class="text-muted">暂无数据</div>'}
+          <div class="grid-2">
+            ${latestCards.join("") || '<div class="text-muted">暂无数据</div>'}
           </div>
         </div>
         <div class="card">
@@ -477,57 +813,111 @@ async function renderMedia() {
 
 async function renderDownloads() {
   try {
+    const filters = [
+      { id: "all", label: "全部" },
+      { id: "downloading", label: "下载中" },
+      { id: "completed", label: "完成" },
+      { id: "uploading", label: "做种" },
+      { id: "active", label: "活动" },
+      { id: "inactive", label: "空闲" },
+      { id: "paused", label: "暂停" },
+      { id: "errored", label: "错误" }
+    ];
+
     const [summaryData, tasks] = await Promise.all([
       api("/api/downloads/summary"),
-      api("/api/downloads/tasks?filter=all")
+      api(`/api/downloads/tasks?filter=${encodeURIComponent(state.downloadsFilter)}`)
     ]);
     const notConfigured = summaryData.configured === false;
+    const selectedTask = tasks.find((t) => t.hash === state.downloadsDetailHash) || tasks[0] || null;
+    state.downloadsDetailHash = selectedTask?.hash || "";
 
     pageContentEl.innerHTML = `
-      <section class="card">
-        <div class="actions" style="justify-content: space-between; align-items: center;">
-          <div class="text-muted">下载中 ${summaryData.summary.downloading} · 做种 ${summaryData.summary.seeding} · 完成 ${summaryData.summary.completed} · ↓${formatSpeed(summaryData.summary.dlSpeed)} ↑${formatSpeed(summaryData.summary.upSpeed)}</div>
-          <div class="actions">
-            <button id="downloadRefreshBtn" class="btn btn-secondary">刷新</button>
-            <button id="addMagnetBtn" class="btn btn-primary">添加磁力</button>
-            <button id="addTorrentBtn" class="btn btn-secondary">上传种子</button>
+      <section class="split">
+        <aside class="menu-list">
+          <div class="nav-group-title" style="margin-top:0;">任务分类</div>
+          ${filters
+            .map(
+              (f) =>
+                `<button class="menu-item ${state.downloadsFilter === f.id ? "active" : ""}" data-download-filter="${f.id}">
+                  ${f.label} (${f.id === "all" ? tasks.length : tasks.filter((t) => String(t.state).includes(f.id)).length})
+                </button>`
+            )
+            .join("")}
+        </aside>
+        <div class="card">
+          <div class="actions" style="justify-content: space-between; align-items: center;">
+            <div class="text-muted">下载中 ${summaryData.summary.downloading} · 做种 ${summaryData.summary.seeding} · 完成 ${summaryData.summary.completed} · ↓${formatSpeed(summaryData.summary.dlSpeed)} ↑${formatSpeed(summaryData.summary.upSpeed)}</div>
+            <div class="actions">
+              <button id="downloadRefreshBtn" class="btn btn-secondary">刷新</button>
+              <button id="addMagnetBtn" class="btn btn-primary">添加磁力</button>
+              <button id="addTorrentBtn" class="btn btn-secondary">上传种子</button>
+            </div>
+          </div>
+          ${notConfigured ? `<div class="text-muted" style="margin-top:8px;">${summaryData.reason || "下载模块未配置，当前展示空数据。请到“设置”补全 qBittorrent 配置。"}</div>` : ""}
+          <div class="table-wrap" style="margin-top:10px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>任务</th><th>状态</th><th>进度</th><th>速度</th><th>剩余</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tasks
+                  .map(
+                    (t) => `
+                    <tr data-download-row="${t.hash}" style="cursor:pointer;">
+                      <td>${t.name}<div class="text-muted">${formatBytes(t.size)}</div></td>
+                      <td>${t.state}</td>
+                      <td><div>${(t.progress * 100).toFixed(2)}%</div><div class="progress"><span style="width:${Math.min(100, t.progress * 100)}%"></span></div></td>
+                      <td>↓${formatSpeed(t.dlspeed)} ↑${formatSpeed(t.upspeed)}</td>
+                      <td>${t.eta > 0 ? `${Math.round(t.eta / 60)} 分钟` : "-"}</td>
+                      <td>
+                        <div class="actions">
+                          <button class="btn btn-secondary" data-qaction="pause" data-hash="${t.hash}">暂停</button>
+                          <button class="btn btn-secondary" data-qaction="resume" data-hash="${t.hash}">继续</button>
+                          <button class="btn btn-danger" data-qaction="delete" data-hash="${t.hash}">删除</button>
+                        </div>
+                      </td>
+                    </tr>
+                  `
+                  )
+                  .join("") || "<tr><td colspan='6'>暂无任务</td></tr>"}
+              </tbody>
+            </table>
           </div>
         </div>
-        ${notConfigured ? `<div class="text-muted" style="margin-top:8px;">${summaryData.reason || "下载模块未配置，当前展示空数据。请到“设置”补全 qBittorrent 配置。"}</div>` : ""}
       </section>
-
       <section class="card table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>任务</th><th>状态</th><th>进度</th><th>速度</th><th>剩余</th><th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tasks
-              .map(
-                (t) => `
-                <tr>
-                  <td>${t.name}<div class="text-muted">${formatBytes(t.size)}</div></td>
-                  <td>${t.state}</td>
-                  <td><div>${(t.progress * 100).toFixed(2)}%</div><div class="progress"><span style="width:${Math.min(100, t.progress * 100)}%"></span></div></td>
-                  <td>↓${formatSpeed(t.dlspeed)} ↑${formatSpeed(t.upspeed)}</td>
-                  <td>${t.eta > 0 ? `${Math.round(t.eta / 60)} 分钟` : "-"}</td>
-                  <td>
-                    <div class="actions">
-                      <button class="btn btn-secondary" data-qaction="pause" data-hash="${t.hash}">暂停</button>
-                      <button class="btn btn-secondary" data-qaction="resume" data-hash="${t.hash}">继续</button>
-                      <button class="btn btn-danger" data-qaction="delete" data-hash="${t.hash}">删除</button>
-                    </div>
-                  </td>
-                </tr>
-              `
-              )
-              .join("")}
-          </tbody>
-        </table>
+        <h3>任务详情</h3>
+        ${
+          selectedTask
+            ? `<div class="grid-3">
+                <div class="list-item"><div class="list-title">名称</div><div>${selectedTask.name}</div></div>
+                <div class="list-item"><div class="list-title">Hash</div><div class="text-muted">${selectedTask.hash}</div></div>
+                <div class="list-item"><div class="list-title">状态</div><div>${selectedTask.state}</div></div>
+                <div class="list-item"><div class="list-title">下载路径</div><div class="text-muted">${selectedTask.save_path || "-"}</div></div>
+                <div class="list-item"><div class="list-title">连接数</div><div>${selectedTask.num_seeds || 0}/${selectedTask.num_leechs || 0}</div></div>
+                <div class="list-item"><div class="list-title">剩余</div><div>${selectedTask.amount_left ? formatBytes(selectedTask.amount_left) : "-"}</div></div>
+              </div>`
+            : '<div class="text-muted">请选择一个任务查看详情</div>'
+        }
       </section>
     `;
+
+    pageContentEl.querySelectorAll("[data-download-filter]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        state.downloadsFilter = btn.dataset.downloadFilter;
+        await renderDownloads();
+      });
+    });
+
+    pageContentEl.querySelectorAll("[data-download-row]").forEach((row) => {
+      row.addEventListener("click", async () => {
+        state.downloadsDetailHash = row.dataset.downloadRow;
+        await renderDownloads();
+      });
+    });
 
     document.getElementById("downloadRefreshBtn").addEventListener("click", renderDownloads);
 
@@ -946,81 +1336,544 @@ async function renderSSL() {
 
 async function renderSettings() {
   try {
-    const [integrations, auditLogs] = await Promise.all([
-      api("/api/settings/integrations"),
-      api("/api/settings/audit-logs?limit=100")
-    ]);
+    const menus = [
+      { id: "device", label: "设备信息" },
+      { id: "users", label: "用户管理" },
+      { id: "groups", label: "用户组" },
+      { id: "storage", label: "存储空间" },
+      { id: "network", label: "网络设置" },
+      { id: "remote", label: "远程访问" },
+      { id: "security", label: "安全性" },
+      { id: "share", label: "文件共享协议" },
+      { id: "integrations", label: "集成配置" },
+      { id: "audit", label: "审计日志" }
+    ];
+
+    let body = "";
+
+    if (state.systemMenu === "device" || state.systemMenu === "storage" || state.systemMenu === "network") {
+      const overview = await api("/api/system/device-overview");
+      if (state.systemMenu === "device") {
+        body = `
+          <section class="card">
+            <h3>设备概览</h3>
+            <div class="grid-3">
+              <div class="list-item"><div class="list-title">主机名</div><div>${overview.device.hostname || "-"}</div></div>
+              <div class="list-item"><div class="list-title">系统</div><div>${overview.device.distro} ${overview.device.release}</div></div>
+              <div class="list-item"><div class="list-title">内核</div><div>${overview.device.kernel}</div></div>
+              <div class="list-item"><div class="list-title">CPU</div><div>${overview.hardware.cpuBrand}</div></div>
+              <div class="list-item"><div class="list-title">核心</div><div>${overview.hardware.physicalCores}C / ${overview.hardware.cores}T</div></div>
+              <div class="list-item"><div class="list-title">内存</div><div>${formatBytes(overview.hardware.memoryTotal)}</div></div>
+            </div>
+          </section>
+        `;
+      }
+      if (state.systemMenu === "storage") {
+        body = `
+          <section class="card">
+            <h3>存储空间</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>挂载点</th><th>文件系统</th><th>总容量</th><th>已用</th><th>可用</th><th>占用</th></tr></thead>
+                <tbody>
+                  ${(overview.storage || [])
+                    .map(
+                      (s) => `<tr>
+                        <td>${s.mount}</td>
+                        <td>${s.type || "-"}</td>
+                        <td>${formatBytes(s.size)}</td>
+                        <td>${formatBytes(s.used)}</td>
+                        <td>${formatBytes(s.available)}</td>
+                        <td>${Number(s.usePercent || 0).toFixed(2)}%</td>
+                      </tr>`
+                    )
+                    .join("") || "<tr><td colspan='6'>暂无磁盘信息</td></tr>"}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        `;
+      }
+      if (state.systemMenu === "network") {
+        body = `
+          <section class="card">
+            <h3>网卡信息</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>接口</th><th>IPv4</th><th>IPv6</th><th>MAC</th><th>状态</th><th>速率</th><th>MTU</th></tr></thead>
+                <tbody>
+                  ${(overview.network.interfaces || [])
+                    .map(
+                      (n) => `<tr>
+                        <td>${n.iface}</td>
+                        <td>${n.ip4 || "-"}</td>
+                        <td>${n.ip6 || "-"}</td>
+                        <td>${n.mac || "-"}</td>
+                        <td>${n.operstate || "-"}</td>
+                        <td>${n.speed || "-"} Mbps</td>
+                        <td>${n.mtu || "-"}</td>
+                      </tr>`
+                    )
+                    .join("") || "<tr><td colspan='7'>暂无网卡信息</td></tr>"}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        `;
+      }
+    }
+
+    if (state.systemMenu === "users") {
+      const users = await api("/api/system/users");
+      body = `
+        <section class="card">
+          <div class="actions" style="justify-content: space-between;">
+            <h3 style="margin:0;">用户管理</h3>
+            <div class="actions">
+              <input id="newUserName" placeholder="用户名" />
+              <input id="newUserPass" placeholder="初始密码(>=8位)" />
+              <select id="newUserRole"><option value="user">user</option><option value="admin">admin</option></select>
+              <button id="createUserBtn" class="btn btn-primary">新建用户</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>用户组</th><th>操作</th></tr></thead>
+              <tbody>
+                ${users
+                  .map(
+                    (u) => `<tr>
+                      <td>${u.id}</td>
+                      <td>${u.username}</td>
+                      <td>${u.role}</td>
+                      <td>${(u.groups || []).join(", ") || "-"}</td>
+                      <td>
+                        <div class="actions">
+                          <button class="btn btn-secondary" data-user-role="${u.id}" data-next-role="${u.role === "admin" ? "user" : "admin"}">切换角色</button>
+                          <button class="btn btn-secondary" data-user-reset="${u.id}">重置密码</button>
+                          <button class="btn btn-danger" data-user-delete="${u.id}">删除</button>
+                        </div>
+                      </td>
+                    </tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.systemMenu === "groups") {
+      const [groups, users] = await Promise.all([api("/api/system/groups"), api("/api/system/users")]);
+      const userOptions = users.map((u) => `<option value="${u.id}">${u.username}</option>`).join("");
+      body = `
+        <section class="card">
+          <div class="actions" style="justify-content: space-between;">
+            <h3 style="margin:0;">用户组管理</h3>
+            <div class="actions">
+              <input id="newGroupName" placeholder="新用户组名称" />
+              <input id="newGroupDesc" placeholder="描述" />
+              <button id="createGroupBtn" class="btn btn-primary">新建用户组</button>
+            </div>
+          </div>
+          <div class="list">
+            ${groups
+              .map(
+                (g) => `<div class="list-item">
+                  <div class="actions" style="justify-content: space-between;">
+                    <div><div class="list-title">${g.name}</div><div class="text-muted">${g.description || "-"}</div></div>
+                    <button class="btn btn-danger" data-group-delete="${g.id}">删除</button>
+                  </div>
+                  <div class="text-muted">成员：${(g.members || []).map((m) => m.username).join(", ") || "无"}</div>
+                  <div class="actions">
+                    <select data-group-user="${g.id}">
+                      <option value="">选择用户</option>
+                      ${userOptions}
+                    </select>
+                    <button class="btn btn-secondary" data-group-add="${g.id}">添加成员</button>
+                  </div>
+                </div>`
+              )
+              .join("") || '<div class="text-muted">暂无用户组</div>'}
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.systemMenu === "remote") {
+      const [remote, ddns] = await Promise.all([api("/api/system/remote"), api("/api/system/ddns")]);
+      body = `
+        <section class="card">
+          <h3>远程访问配置</h3>
+          <div class="grid-2">
+            <label>启用远程访问<select id="remoteEnabled"><option value="1" ${remote.enabled ? "selected" : ""}>启用</option><option value="0" ${!remote.enabled ? "selected" : ""}>禁用</option></select></label>
+            <label>服务商<input id="remoteProvider" value="${remote.provider || "cloudflare"}" /></label>
+            <label>域名<input id="remoteDomain" value="${remote.domain || ""}" /></label>
+            <label>Token<input id="remoteToken" placeholder="${remote.tokenMasked || "可留空"}" /></label>
+          </div>
+          <div class="actions" style="margin-top:10px;"><button id="saveRemoteBtn" class="btn btn-primary">保存远程配置</button></div>
+        </section>
+        <section class="card">
+          <h3>DDNS 记录</h3>
+          <div class="actions">
+            <input id="ddnsDomain" placeholder="域名，例如 nas.example.com" />
+            <input id="ddnsIP" placeholder="IP，可留空" />
+            <button id="addDdnsBtn" class="btn btn-primary">新增记录</button>
+          </div>
+          <div class="table-wrap" style="margin-top:10px;">
+            <table>
+              <thead><tr><th>ID</th><th>服务商</th><th>域名</th><th>IP</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+              <tbody>
+                ${ddns
+                  .map(
+                    (r) => `<tr><td>${r.id}</td><td>${r.provider}</td><td>${r.domain}</td><td>${r.ip_address || "-"}</td><td>${r.status}</td><td>${formatDate(r.updated_at)}</td><td><button class="btn btn-danger" data-ddns-delete="${r.id}">删除</button></td></tr>`
+                  )
+                  .join("") || "<tr><td colspan='7'>暂无记录</td></tr>"}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.systemMenu === "security" || state.systemMenu === "share") {
+      const services = await api("/api/system/services");
+      const keys =
+        state.systemMenu === "security"
+          ? [
+              ["sshEnabled", "SSH"],
+              ["firewallEnabled", "防火墙"],
+              ["notifyEnabled", "通知"],
+              ["autoUpdateEnabled", "自动更新"]
+            ]
+          : [
+              ["smbEnabled", "SMB"],
+              ["webdavEnabled", "WebDAV"],
+              ["ftpEnabled", "FTP"],
+              ["nfsEnabled", "NFS"],
+              ["dlnaEnabled", "DLNA"]
+            ];
+      body = `
+        <section class="card">
+          <h3>${state.systemMenu === "security" ? "安全性" : "文件共享协议"}</h3>
+          <div class="grid-2">
+            ${keys
+              .map(
+                ([key, label]) => `
+                  <label>${label}
+                    <select data-service-key="${key}">
+                      <option value="1" ${services[key] ? "selected" : ""}>启用</option>
+                      <option value="0" ${!services[key] ? "selected" : ""}>禁用</option>
+                    </select>
+                  </label>`
+              )
+              .join("")}
+          </div>
+          <div class="actions" style="margin-top:10px;">
+            <button id="saveServiceSwitchBtn" class="btn btn-primary">保存开关</button>
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.systemMenu === "integrations") {
+      const integrations = await api("/api/settings/integrations");
+      body = `
+        <section class="card">
+          <h3>集成配置</h3>
+          <div class="grid-2">
+            <label>Jellyfin 地址<input id="s_jellyfinBaseUrl" value="${integrations.jellyfinBaseUrl || ""}" /></label>
+            <label>Jellyfin API Key<input id="s_jellyfinApiKey" value="${integrations.jellyfinApiKey || ""}" /></label>
+            <label>Jellyfin User ID<input id="s_jellyfinUserId" value="${integrations.jellyfinUserId || ""}" /></label>
+            <label>qB 地址<input id="s_qbBaseUrl" value="${integrations.qbBaseUrl || ""}" /></label>
+            <label>qB 用户名<input id="s_qbUsername" value="${integrations.qbUsername || ""}" /></label>
+            <label>qB 密码<input id="s_qbPassword" value="${integrations.qbPassword || ""}" /></label>
+            <label>媒体目录<input id="s_mediaPath" value="${integrations.mediaPath || "/srv/media"}" /></label>
+            <label>下载目录<input id="s_downloadsPath" value="${integrations.downloadsPath || "/srv/downloads"}" /></label>
+            <label>Docker 数据目录<input id="s_dockerDataPath" value="${integrations.dockerDataPath || "/srv/docker"}" /></label>
+            <label>Jellyfin 对外端口<input id="s_jellyfinHostPort" type="number" value="${integrations.jellyfinHostPort || 18096}" /></label>
+            <label>qB Web 端口<input id="s_qbWebPort" type="number" value="${integrations.qbWebPort || 18080}" /></label>
+            <label>qB Peer 端口<input id="s_qbPeerPort" type="number" value="${integrations.qbPeerPort || 16881}" /></label>
+            <label>Portainer 端口<input id="s_portainerHostPort" type="number" value="${integrations.portainerHostPort || 19000}" /></label>
+            <label>Watchtower 间隔(秒)<input id="s_watchtowerInterval" type="number" value="${integrations.watchtowerInterval || 86400}" /></label>
+          </div>
+          <div class="actions" style="margin-top:10px;">
+            <button id="saveSettingsBtn" class="btn btn-primary">保存设置</button>
+          </div>
+        </section>
+      `;
+    }
+
+    if (state.systemMenu === "audit") {
+      const auditLogs = await api("/api/settings/audit-logs?limit=200");
+      body = `
+        <section class="card">
+          <h3>审计日志</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>操作</th><th>执行人</th><th>目标</th><th>状态</th><th>详情</th></tr></thead>
+              <tbody>
+                ${auditLogs
+                  .map(
+                    (l) => `<tr><td>${formatDate(l.created_at)}</td><td>${l.action}</td><td>${l.actor}</td><td>${l.target || "-"}</td><td>${l.status}</td><td>${l.detail || "-"}</td></tr>`
+                  )
+                  .join("")}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      `;
+    }
 
     pageContentEl.innerHTML = `
-      <section class="card">
-        <h3>集成配置</h3>
-        <div class="grid-2">
-          <label>Jellyfin 地址<input id="s_jellyfinBaseUrl" value="${integrations.jellyfinBaseUrl || ""}" placeholder="http://jellyfin:8096" /></label>
-          <label>Jellyfin API Key<input id="s_jellyfinApiKey" value="${integrations.jellyfinApiKey || ""}" /></label>
-          <label>Jellyfin User ID<input id="s_jellyfinUserId" value="${integrations.jellyfinUserId || ""}" /></label>
-          <label>qB 地址<input id="s_qbBaseUrl" value="${integrations.qbBaseUrl || ""}" placeholder="http://qbittorrent:8080" /></label>
-          <label>qB 用户名<input id="s_qbUsername" value="${integrations.qbUsername || ""}" /></label>
-          <label>qB 密码<input id="s_qbPassword" value="${integrations.qbPassword || ""}" /></label>
-          <label>媒体目录<input id="s_mediaPath" value="${integrations.mediaPath || "/srv/media"}" placeholder="/srv/media" /></label>
-          <label>下载目录<input id="s_downloadsPath" value="${integrations.downloadsPath || "/srv/downloads"}" placeholder="/srv/downloads" /></label>
-          <label>Docker 数据目录<input id="s_dockerDataPath" value="${integrations.dockerDataPath || "/srv/docker"}" placeholder="/srv/docker" /></label>
-          <label>Jellyfin 对外端口<input id="s_jellyfinHostPort" type="number" value="${integrations.jellyfinHostPort || 18096}" /></label>
-          <label>qB Web 端口<input id="s_qbWebPort" type="number" value="${integrations.qbWebPort || 18080}" /></label>
-          <label>qB Peer 端口(TCP/UDP)<input id="s_qbPeerPort" type="number" value="${integrations.qbPeerPort || 16881}" /></label>
-          <label>Portainer 对外端口<input id="s_portainerHostPort" type="number" value="${integrations.portainerHostPort || 19000}" /></label>
-          <label>Watchtower 轮询间隔(秒)<input id="s_watchtowerInterval" type="number" value="${integrations.watchtowerInterval || 86400}" /></label>
-        </div>
-        <div class="actions" style="margin-top: 10px;">
-          <button id="saveSettingsBtn" class="btn btn-primary">保存设置</button>
-        </div>
-      </section>
-
-      <section class="card">
-        <h3>审计日志</h3>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>时间</th><th>操作</th><th>执行人</th><th>目标</th><th>状态</th><th>详情</th></tr></thead>
-            <tbody>
-              ${auditLogs
-                .map(
-                  (l) => `<tr><td>${formatDate(l.created_at)}</td><td>${l.action}</td><td>${l.actor}</td><td>${l.target || "-"}</td><td>${l.status}</td><td>${l.detail || "-"}</td></tr>`
-                )
-                .join("")}
-            </tbody>
-          </table>
-        </div>
+      <section class="split">
+        <aside class="menu-list">
+          ${menus
+            .map(
+              (m) =>
+                `<button class="menu-item ${state.systemMenu === m.id ? "active" : ""}" data-system-menu="${m.id}">${m.label}</button>`
+            )
+            .join("")}
+        </aside>
+        <div class="list">${body}</div>
       </section>
     `;
 
-    document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
-      try {
-        const payload = {
-          jellyfinBaseUrl: document.getElementById("s_jellyfinBaseUrl").value.trim(),
-          jellyfinApiKey: document.getElementById("s_jellyfinApiKey").value.trim(),
-          jellyfinUserId: document.getElementById("s_jellyfinUserId").value.trim(),
-          qbBaseUrl: document.getElementById("s_qbBaseUrl").value.trim(),
-          qbUsername: document.getElementById("s_qbUsername").value.trim(),
-          qbPassword: document.getElementById("s_qbPassword").value.trim(),
-          mediaPath: document.getElementById("s_mediaPath").value.trim(),
-          downloadsPath: document.getElementById("s_downloadsPath").value.trim(),
-          dockerDataPath: document.getElementById("s_dockerDataPath").value.trim(),
-          jellyfinHostPort: Number(document.getElementById("s_jellyfinHostPort").value || 18096),
-          qbWebPort: Number(document.getElementById("s_qbWebPort").value || 18080),
-          qbPeerPort: Number(document.getElementById("s_qbPeerPort").value || 16881),
-          portainerHostPort: Number(document.getElementById("s_portainerHostPort").value || 19000),
-          watchtowerInterval: Number(document.getElementById("s_watchtowerInterval").value || 86400)
-        };
-
-        await api("/api/settings/integrations", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        showToast("设置已保存");
-      } catch (err) {
-        showToast(err.message);
-      }
+    pageContentEl.querySelectorAll("[data-system-menu]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        state.systemMenu = btn.dataset.systemMenu;
+        await renderSettings();
+      });
     });
+
+    const saveIntegrationBtn = document.getElementById("saveSettingsBtn");
+    if (saveIntegrationBtn) {
+      saveIntegrationBtn.addEventListener("click", async () => {
+        try {
+          const payload = {
+            jellyfinBaseUrl: document.getElementById("s_jellyfinBaseUrl").value.trim(),
+            jellyfinApiKey: document.getElementById("s_jellyfinApiKey").value.trim(),
+            jellyfinUserId: document.getElementById("s_jellyfinUserId").value.trim(),
+            qbBaseUrl: document.getElementById("s_qbBaseUrl").value.trim(),
+            qbUsername: document.getElementById("s_qbUsername").value.trim(),
+            qbPassword: document.getElementById("s_qbPassword").value.trim(),
+            mediaPath: document.getElementById("s_mediaPath").value.trim(),
+            downloadsPath: document.getElementById("s_downloadsPath").value.trim(),
+            dockerDataPath: document.getElementById("s_dockerDataPath").value.trim(),
+            jellyfinHostPort: Number(document.getElementById("s_jellyfinHostPort").value || 18096),
+            qbWebPort: Number(document.getElementById("s_qbWebPort").value || 18080),
+            qbPeerPort: Number(document.getElementById("s_qbPeerPort").value || 16881),
+            portainerHostPort: Number(document.getElementById("s_portainerHostPort").value || 19000),
+            watchtowerInterval: Number(document.getElementById("s_watchtowerInterval").value || 86400)
+          };
+          await api("/api/settings/integrations", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          showToast("集成配置已保存");
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
+
+    const createUserBtn = document.getElementById("createUserBtn");
+    if (createUserBtn) {
+      createUserBtn.addEventListener("click", async () => {
+        try {
+          await api("/api/system/users", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: document.getElementById("newUserName").value.trim(),
+              password: document.getElementById("newUserPass").value.trim(),
+              role: document.getElementById("newUserRole").value
+            })
+          });
+          showToast("用户已创建");
+          await renderSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
+
+    pageContentEl.querySelectorAll("[data-user-role]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/system/users/${btn.dataset.userRole}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ role: btn.dataset.nextRole })
+          });
+          showToast("角色已更新");
+          await renderSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    pageContentEl.querySelectorAll("[data-user-reset]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const password = prompt("请输入新密码（至少8位）", "");
+        if (!password) return;
+        try {
+          await api(`/api/system/users/${btn.dataset.userReset}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password })
+          });
+          showToast("密码已重置");
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    pageContentEl.querySelectorAll("[data-user-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/system/users/${btn.dataset.userDelete}`, { method: "DELETE" });
+          showToast("用户已删除");
+          await renderSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    const createGroupBtn = document.getElementById("createGroupBtn");
+    if (createGroupBtn) {
+      createGroupBtn.addEventListener("click", async () => {
+        try {
+          await api("/api/system/groups", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: document.getElementById("newGroupName").value.trim(),
+              description: document.getElementById("newGroupDesc").value.trim()
+            })
+          });
+          showToast("用户组已创建");
+          await renderSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
+
+    pageContentEl.querySelectorAll("[data-group-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/system/groups/${btn.dataset.groupDelete}`, { method: "DELETE" });
+          showToast("用户组已删除");
+          await renderSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    pageContentEl.querySelectorAll("[data-group-add]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          const groupId = btn.dataset.groupAdd;
+          const select = pageContentEl.querySelector(`[data-group-user="${groupId}"]`);
+          const userId = select?.value || "";
+          if (!userId) {
+            showToast("请选择用户");
+            return;
+          }
+          await api(`/api/system/groups/${groupId}/members`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ userId })
+          });
+          showToast("成员已添加");
+          await renderSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    const saveRemoteBtn = document.getElementById("saveRemoteBtn");
+    if (saveRemoteBtn) {
+      saveRemoteBtn.addEventListener("click", async () => {
+        try {
+          await api("/api/system/remote", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              enabled: document.getElementById("remoteEnabled").value === "1",
+              provider: document.getElementById("remoteProvider").value.trim(),
+              domain: document.getElementById("remoteDomain").value.trim(),
+              token: document.getElementById("remoteToken").value.trim()
+            })
+          });
+          showToast("远程访问配置已保存");
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
+
+    const addDdnsBtn = document.getElementById("addDdnsBtn");
+    if (addDdnsBtn) {
+      addDdnsBtn.addEventListener("click", async () => {
+        try {
+          await api("/api/system/ddns", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              provider: "cloudflare",
+              domain: document.getElementById("ddnsDomain").value.trim(),
+              ipAddress: document.getElementById("ddnsIP").value.trim(),
+              status: "success"
+            })
+          });
+          showToast("DDNS 记录已添加");
+          await renderSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
+
+    pageContentEl.querySelectorAll("[data-ddns-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/system/ddns/${btn.dataset.ddnsDelete}`, { method: "DELETE" });
+          showToast("DDNS 记录已删除");
+          await renderSettings();
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    });
+
+    const saveServiceSwitchBtn = document.getElementById("saveServiceSwitchBtn");
+    if (saveServiceSwitchBtn) {
+      saveServiceSwitchBtn.addEventListener("click", async () => {
+        try {
+          const payload = {};
+          pageContentEl.querySelectorAll("[data-service-key]").forEach((el) => {
+            payload[el.dataset.serviceKey] = el.value === "1";
+          });
+          await api("/api/system/services", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          showToast("服务开关已保存");
+        } catch (err) {
+          showToast(err.message);
+        }
+      });
+    }
   } catch (err) {
     pageContentEl.innerHTML = `<div class="card">加载失败：${err.message}</div>`;
   }
@@ -1043,6 +1896,36 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
     // noop
   }
   forceLogout();
+});
+
+document.getElementById("logoutBtnSide").addEventListener("click", async () => {
+  try {
+    await api("/api/auth/logout", { method: "POST" });
+  } catch {
+    // noop
+  }
+  forceLogout();
+});
+
+document.getElementById("globalSearch").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  const keyword = String(e.target.value || "").toLowerCase().trim();
+  if (!keyword) return;
+  const map = {
+    dashboard: ["总览", "dashboard", "仪表盘"],
+    containers: ["docker", "容器", "compose", "镜像", "网络"],
+    downloads: ["下载", "qb", "torrent"],
+    media: ["影视", "jellyfin", "媒体"],
+    apps: ["应用", "app"],
+    ssl: ["ssl", "证书", "https"],
+    settings: ["设置", "系统", "用户", "存储", "网络", "安全"]
+  };
+  const found = Object.entries(map).find(([, arr]) => arr.some((k) => keyword.includes(k.toLowerCase())));
+  if (found) {
+    await navigate(found[0]);
+  } else {
+    showToast("未匹配到模块");
+  }
 });
 
 document.getElementById("loginForm").addEventListener("submit", async (e) => {

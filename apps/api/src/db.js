@@ -65,6 +65,34 @@ CREATE TABLE IF NOT EXISTS app_tasks (
   updated_at TEXT NOT NULL,
   finished_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS user_groups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT UNIQUE NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_group_members (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  group_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, group_id)
+);
+
+CREATE TABLE IF NOT EXISTS ddns_records (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  provider TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  ip_address TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'unknown',
+  config_json TEXT NOT NULL DEFAULT '{}',
+  last_synced_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `);
 
 function ensureColumn(table, column, definition) {
@@ -88,6 +116,24 @@ function seedDefaultAdmin() {
   ).run(config.adminUsername, passwordHash, now, now);
 }
 
+function seedDefaultGroups() {
+  const now = new Date().toISOString();
+  const upsertGroup = db.prepare(
+    "INSERT INTO user_groups (name, description, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at"
+  );
+  upsertGroup.run("Administrators", "default administrator group", now, now);
+  upsertGroup.run("Users", "default user group", now, now);
+
+  const admin = db.prepare("SELECT id FROM users WHERE username = ?").get(config.adminUsername);
+  const administratorsGroup = db.prepare("SELECT id FROM user_groups WHERE name = 'Administrators'").get();
+  if (admin && administratorsGroup) {
+    db.prepare(
+      "INSERT OR IGNORE INTO user_group_members (user_id, group_id, created_at) VALUES (?, ?, ?)"
+    ).run(admin.id, administratorsGroup.id, now);
+  }
+}
+
 seedDefaultAdmin();
+seedDefaultGroups();
 
 export { db };

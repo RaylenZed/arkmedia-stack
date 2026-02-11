@@ -4,12 +4,21 @@ import { changePassword, createToken, loginUser } from "../auth.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
 import { writeAudit } from "../services/auditService.js";
 import { HttpError } from "../lib/httpError.js";
+import { config } from "../config.js";
 
 const router = express.Router();
 
 router.post(
   "/login",
   asyncHandler(async (req, res) => {
+    if (config.forceHttpsAuth) {
+      const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "").toLowerCase();
+      const isSecure = req.secure || proto === "https";
+      if (!isSecure) {
+        throw new HttpError(400, "当前服务要求 HTTPS 登录，请使用 https:// 访问面板");
+      }
+    }
+
     const { username, password } = req.body || {};
     if (!username || !password) throw new HttpError(400, "用户名和密码必填");
 

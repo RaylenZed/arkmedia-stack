@@ -2,10 +2,21 @@ import express from "express";
 import { asyncHandler } from "../middleware/asyncHandler.js";
 import { requireAuth } from "../middleware/authMiddleware.js";
 import {
+  connectContainerToNetwork,
+  controlComposeProject,
   controlContainer,
+  createDockerNetwork,
   getContainerLogs,
   getContainerSummary,
   getDockerInfo,
+  listComposeProjects,
+  listDockerNetworks,
+  listLocalImages,
+  pullImageByName,
+  removeDockerNetwork,
+  removeLocalImage,
+  searchRegistryRepositories,
+  disconnectContainerFromNetwork,
   updateContainer
 } from "../services/dockerService.js";
 import { writeAudit } from "../services/auditService.js";
@@ -24,6 +35,144 @@ router.get(
   "/info",
   asyncHandler(async (_req, res) => {
     res.json(await getDockerInfo());
+  })
+);
+
+router.get(
+  "/compose/projects",
+  asyncHandler(async (_req, res) => {
+    res.json(await listComposeProjects());
+  })
+);
+
+router.post(
+  "/compose/projects/:project/:action(start|stop|restart)",
+  asyncHandler(async (req, res) => {
+    const { project, action } = req.params;
+    const result = await controlComposeProject(project, action);
+    writeAudit({
+      action: `compose_${action}`,
+      actor: req.user.username,
+      target: project,
+      status: "ok",
+      detail: JSON.stringify(result)
+    });
+    res.json(result);
+  })
+);
+
+router.get(
+  "/images",
+  asyncHandler(async (_req, res) => {
+    res.json(await listLocalImages());
+  })
+);
+
+router.post(
+  "/images/pull",
+  asyncHandler(async (req, res) => {
+    const image = String(req.body?.image || "");
+    const result = await pullImageByName(image);
+    writeAudit({
+      action: "image_pull",
+      actor: req.user.username,
+      target: image,
+      status: "ok"
+    });
+    res.json(result);
+  })
+);
+
+router.delete(
+  "/images/:id",
+  asyncHandler(async (req, res) => {
+    const force = Boolean(req.query.force === "1");
+    const result = await removeLocalImage(req.params.id, force);
+    writeAudit({
+      action: "image_remove",
+      actor: req.user.username,
+      target: req.params.id,
+      status: "ok",
+      detail: `force=${force}`
+    });
+    res.json(result);
+  })
+);
+
+router.get(
+  "/registry/search",
+  asyncHandler(async (req, res) => {
+    const q = String(req.query.q || "");
+    const page = Number(req.query.page || 1);
+    const limit = Number(req.query.limit || 20);
+    res.json(await searchRegistryRepositories(q, page, limit));
+  })
+);
+
+router.get(
+  "/networks",
+  asyncHandler(async (_req, res) => {
+    res.json(await listDockerNetworks());
+  })
+);
+
+router.post(
+  "/networks",
+  asyncHandler(async (req, res) => {
+    const result = await createDockerNetwork(req.body || {});
+    writeAudit({
+      action: "network_create",
+      actor: req.user.username,
+      target: result.name,
+      status: "ok"
+    });
+    res.json(result);
+  })
+);
+
+router.delete(
+  "/networks/:id",
+  asyncHandler(async (req, res) => {
+    const result = await removeDockerNetwork(req.params.id);
+    writeAudit({
+      action: "network_remove",
+      actor: req.user.username,
+      target: req.params.id,
+      status: "ok"
+    });
+    res.json(result);
+  })
+);
+
+router.post(
+  "/networks/:id/connect",
+  asyncHandler(async (req, res) => {
+    const containerId = String(req.body?.containerId || "");
+    const result = await connectContainerToNetwork(req.params.id, containerId);
+    writeAudit({
+      action: "network_connect",
+      actor: req.user.username,
+      target: `${req.params.id}:${containerId}`,
+      status: "ok"
+    });
+    res.json(result);
+  })
+);
+
+router.post(
+  "/networks/:id/disconnect",
+  asyncHandler(async (req, res) => {
+    const containerId = String(req.body?.containerId || "");
+    const force = Boolean(req.body?.force);
+    const result = await disconnectContainerFromNetwork(req.params.id, containerId, force);
+    writeAudit({
+      action: "network_disconnect",
+      actor: req.user.username,
+      target: `${req.params.id}:${containerId}`,
+      status: "ok",
+      detail: `force=${force}`
+    });
+    res.json(result);
   })
 );
 

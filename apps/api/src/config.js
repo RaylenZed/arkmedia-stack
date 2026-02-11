@@ -44,6 +44,7 @@ export const config = {
   cloudflareApiToken:
     process.env.CLOUDFLARE_API_TOKEN || cloudflareTokenFromFile || "",
   proxyPublicPort: Number(process.env.PUBLIC_PORT || 24443),
+  forceHttpsAuth: String(process.env.FORCE_HTTPS_AUTH || "0") === "1",
   timezone: process.env.TZ || "Asia/Shanghai"
 };
 

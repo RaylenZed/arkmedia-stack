@@ -146,7 +146,7 @@ export async function getContainerLogs(id, lines = 200) {
   }
 }
 
-function pullImage(image) {
+function pullImage(image, onProgress) {
   return new Promise((resolve, reject) => {
     docker.pull(image, (err, stream) => {
       if (err) return reject(err);
@@ -156,10 +156,265 @@ function pullImage(image) {
           if (progressErr) reject(progressErr);
           else resolve(true);
         },
-        () => {}
+        (event) => {
+          if (onProgress) onProgress(event);
+        }
       );
     });
   });
+}
+
+function mapImage(img) {
+  const tags = img.RepoTags || [];
+  return {
+    id: img.Id,
+    shortId: (img.Id || "").replace("sha256:", "").slice(0, 12),
+    createdAt: new Date((img.Created || 0) * 1000).toISOString(),
+    size: img.Size || 0,
+    sharedSize: img.SharedSize || 0,
+    virtualSize: img.VirtualSize || 0,
+    tags: tags.filter((t) => t && t !== "<none>:<none>"),
+    digest: (img.RepoDigests || [])[0] || "",
+    containers: img.Containers || 0
+  };
+}
+
+export async function listLocalImages() {
+  try {
+    const list = await docker.listImages({ all: true });
+    return list.map(mapImage);
+  } catch (err) {
+    throw new HttpError(503, `Docker 服务不可用: ${err.message}`);
+  }
+}
+
+export async function pullImageByName(name) {
+  const image = String(name || "").trim();
+  if (!image) {
+    throw new HttpError(400, "镜像名称不能为空");
+  }
+  try {
+    await pullImage(image);
+    return { ok: true, image };
+  } catch (err) {
+    throw new HttpError(500, `拉取镜像失败: ${err.message}`);
+  }
+}
+
+export async function removeLocalImage(id, force = false) {
+  try {
+    const image = docker.getImage(id);
+    await image.remove({ force: Boolean(force), noprune: false });
+    return { ok: true, id, force: Boolean(force) };
+  } catch (err) {
+    throw new HttpError(500, `删除镜像失败: ${err.message}`);
+  }
+}
+
+export async function searchRegistryRepositories(query = "", page = 1, limit = 20) {
+  const q = String(query || "").trim();
+  if (!q) return { count: 0, page, limit, results: [] };
+
+  const url = new URL("https://hub.docker.com/v2/search/repositories/");
+  url.searchParams.set("query", q);
+  url.searchParams.set("page", String(Math.max(1, Number(page) || 1)));
+  url.searchParams.set("page_size", String(Math.min(50, Math.max(1, Number(limit) || 20))));
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new HttpError(res.status, `镜像仓库查询失败: ${text || res.statusText}`);
+    }
+    const data = await res.json();
+    return {
+      count: data.count || 0,
+      page: Number(page) || 1,
+      limit: Number(limit) || 20,
+      results: (data.results || []).map((item) => ({
+        name: item.repo_name || item.name || "",
+        shortDescription: item.short_description || "",
+        starCount: item.star_count || 0,
+        pullCount: item.pull_count || 0,
+        isOfficial: Boolean(item.is_official),
+        isAutomated: Boolean(item.is_automated)
+      }))
+    };
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(500, `镜像仓库查询失败: ${err.message}`);
+  }
+}
+
+function mapNetwork(net) {
+  const containers = Object.values(net.Containers || {}).map((c) => ({
+    id: c.Name || c.EndpointID || "",
+    name: c.Name || "",
+    ipv4: c.IPv4Address || "",
+    ipv6: c.IPv6Address || ""
+  }));
+
+  return {
+    id: net.Id,
+    name: net.Name,
+    driver: net.Driver,
+    scope: net.Scope,
+    internal: Boolean(net.Internal),
+    attachable: Boolean(net.Attachable),
+    ingress: Boolean(net.Ingress),
+    createdAt: net.Created ? new Date(net.Created).toISOString() : "",
+    containerCount: containers.length,
+    containers
+  };
+}
+
+export async function listDockerNetworks() {
+  try {
+    const raw = await docker.listNetworks();
+    const details = await Promise.all(
+      raw.map(async (n) => {
+        const net = docker.getNetwork(n.Id);
+        const inspect = await net.inspect();
+        return mapNetwork(inspect);
+      })
+    );
+    return details.sort((a, b) => a.name.localeCompare(b.name));
+  } catch (err) {
+    throw new HttpError(503, `Docker 服务不可用: ${err.message}`);
+  }
+}
+
+export async function createDockerNetwork({ name, driver = "bridge", attachable = true, internal = false } = {}) {
+  const netName = String(name || "").trim();
+  if (!netName) {
+    throw new HttpError(400, "网络名称不能为空");
+  }
+  try {
+    const result = await docker.createNetwork({
+      Name: netName,
+      Driver: driver,
+      Attachable: Boolean(attachable),
+      Internal: Boolean(internal)
+    });
+    return { ok: true, id: result.id, name: netName };
+  } catch (err) {
+    throw new HttpError(500, `创建网络失败: ${err.message}`);
+  }
+}
+
+export async function removeDockerNetwork(id) {
+  try {
+    const net = docker.getNetwork(id);
+    await net.remove();
+    return { ok: true, id };
+  } catch (err) {
+    throw new HttpError(500, `删除网络失败: ${err.message}`);
+  }
+}
+
+export async function connectContainerToNetwork(networkId, containerId) {
+  try {
+    const net = docker.getNetwork(networkId);
+    await net.connect({ Container: containerId });
+    return { ok: true, networkId, containerId };
+  } catch (err) {
+    throw new HttpError(500, `容器加入网络失败: ${err.message}`);
+  }
+}
+
+export async function disconnectContainerFromNetwork(networkId, containerId, force = false) {
+  try {
+    const net = docker.getNetwork(networkId);
+    await net.disconnect({ Container: containerId, Force: Boolean(force) });
+    return { ok: true, networkId, containerId, force: Boolean(force) };
+  } catch (err) {
+    throw new HttpError(500, `容器移出网络失败: ${err.message}`);
+  }
+}
+
+export async function listComposeProjects() {
+  try {
+    const list = await docker.listContainers({ all: true });
+    const map = new Map();
+    for (const item of list) {
+      const project = item.Labels?.["com.docker.compose.project"];
+      if (!project) continue;
+      if (!map.has(project)) {
+        map.set(project, {
+          name: project,
+          total: 0,
+          running: 0,
+          stopped: 0,
+          services: new Set(),
+          containers: []
+        });
+      }
+      const row = map.get(project);
+      row.total += 1;
+      if ((item.State || "") === "running") row.running += 1;
+      else row.stopped += 1;
+      const service = item.Labels?.["com.docker.compose.service"];
+      if (service) row.services.add(service);
+      row.containers.push({
+        id: item.Id,
+        name: (item.Names?.[0] || "").replace(/^\//, ""),
+        service: service || "-",
+        state: item.State || "unknown",
+        status: item.Status || ""
+      });
+    }
+
+    return [...map.values()].map((v) => ({
+      name: v.name,
+      total: v.total,
+      running: v.running,
+      stopped: v.stopped,
+      services: [...v.services],
+      containers: v.containers
+    }));
+  } catch (err) {
+    throw new HttpError(503, `Docker 服务不可用: ${err.message}`);
+  }
+}
+
+export async function controlComposeProject(projectName, action) {
+  const supported = new Set(["start", "stop", "restart"]);
+  if (!supported.has(action)) {
+    throw new HttpError(400, "不支持的项目操作");
+  }
+  const project = String(projectName || "").trim();
+  if (!project) {
+    throw new HttpError(400, "项目名不能为空");
+  }
+
+  try {
+    const list = await docker.listContainers({
+      all: true,
+      filters: {
+        label: [`com.docker.compose.project=${project}`]
+      }
+    });
+    if (list.length === 0) {
+      throw new HttpError(404, "未找到 Compose 项目");
+    }
+
+    for (const item of list) {
+      const container = docker.getContainer(item.Id);
+      if (action === "start") await container.start();
+      if (action === "stop") await container.stop();
+      if (action === "restart") await container.restart();
+    }
+
+    return {
+      ok: true,
+      project,
+      action,
+      count: list.length
+    };
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(500, `项目操作失败: ${err.message}`);
+  }
 }
 
 function buildCreateOptions(inspect) {

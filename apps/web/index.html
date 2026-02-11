@@ -9,22 +9,31 @@
   <body>
     <div id="app" class="app-shell hidden">
       <aside class="sidebar">
-        <div class="brand">方舟 NAS</div>
+        <div class="brand">
+          <span class="brand-dot"></span>
+          <span>ArkNAS Hub</span>
+        </div>
         <nav id="navMenu" class="nav-menu">
-          <button data-page="dashboard" class="nav-item active">总览</button>
-          <button data-page="containers" class="nav-item">容器管理</button>
-          <button data-page="media" class="nav-item">影视管理</button>
-          <button data-page="downloads" class="nav-item">下载管理</button>
+          <div class="nav-group-title">OVERVIEW</div>
+          <button data-page="dashboard" class="nav-item active">仪表盘</button>
+          <button data-page="containers" class="nav-item">Docker 中心</button>
+          <button data-page="downloads" class="nav-item">下载</button>
+          <button data-page="media" class="nav-item">影视</button>
           <button data-page="apps" class="nav-item">应用中心</button>
-          <button data-page="ssl" class="nav-item">SSL 管理</button>
-          <button data-page="settings" class="nav-item">设置</button>
+          <div class="nav-group-title">SECURITY</div>
+          <button data-page="ssl" class="nav-item">SSL 证书</button>
+          <button data-page="settings" class="nav-item">系统设置</button>
         </nav>
+        <div class="sidebar-footer">
+          <button id="logoutBtnSide" class="nav-item danger">退出登录</button>
+        </div>
       </aside>
 
       <div class="main-wrap">
         <header class="topbar">
-          <div id="pageTitle" class="page-title">总览</div>
+          <div id="pageTitle" class="page-title">仪表盘</div>
           <div class="top-actions">
+            <input id="globalSearch" class="top-search" placeholder="搜索功能、模块或关键字..." />
             <button id="refreshBtn" class="btn btn-secondary">刷新</button>
             <button id="logoutBtn" class="btn btn-danger">退出</button>
           </div>
