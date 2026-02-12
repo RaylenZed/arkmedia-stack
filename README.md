@@ -433,3 +433,106 @@ Jellyfin 支持一个媒体库挂多个路径。
 
 - 两侧文件命名规则保持一致，减少重复识别。
 - 如果存在重复剧集，优先保留一个主来源，另一路做备份。
+
+---
+
+## 16. 可选方案：使用 Caddy + Cloudflare 插件（替代 Traefik）
+
+如果你觉得 Traefik 配置成本偏高，可以切换到 Caddy。  
+本节是“替代反向代理”方案，不要和 Traefik 同时对外监听同一端口。
+
+### 16.1 适用场景
+
+- 需要更轻量的配置文件。
+- 仍要 Cloudflare DNS-01 自动签证书。
+- 继续使用同域名不同端口访问业务。
+
+### 16.2 创建 `Dockerfile.caddy`
+
+在项目根目录新建 `Dockerfile.caddy`：
+
+```dockerfile
+FROM caddy:2-builder AS builder
+RUN xcaddy build --with github.com/caddy-dns/cloudflare
+
+FROM caddy:2
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+```
+
+### 16.3 创建 `Caddyfile`
+
+在项目根目录新建 `Caddyfile`：
+
+```caddy
+{
+    email you@example.com
+    acme_dns cloudflare {env.CF_DNS_API_TOKEN}
+}
+
+pve.example.com:8443 {
+    reverse_proxy arkmedia-jellyfin:8096
+}
+
+pve.example.com:2053 {
+    reverse_proxy arkmedia-qbittorrent:8080
+}
+
+pve.example.com:2096 {
+    reverse_proxy arkmedia-openlist:5244
+}
+```
+
+把 `pve.example.com` 改成你的实际域名（与 `.env` 的 `BASE_DOMAIN` 保持一致）。
+
+### 16.4 创建 `docker-compose.caddy.yml`（覆盖文件）
+
+在项目根目录新建 `docker-compose.caddy.yml`：
+
+```yaml
+services:
+  traefik:
+    profiles: ["disabled"]
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    container_name: arkmedia-caddy
+    restart: unless-stopped
+    ports:
+      - "${JELLYFIN_HTTPS_PORT}:${JELLYFIN_HTTPS_PORT}"
+      - "${QBIT_HTTPS_PORT}:${QBIT_HTTPS_PORT}"
+      - "${OPENLIST_HTTPS_PORT}:${OPENLIST_HTTPS_PORT}"
+    environment:
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - media_net
+
+volumes:
+  caddy_data:
+  caddy_config:
+```
+
+### 16.5 启动 Caddy 模式
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+```
+
+### 16.6 验证 Cloudflare 插件
+
+```bash
+docker compose exec caddy caddy list-modules | grep cloudflare
+docker compose logs -f caddy
+```
+
+如果输出中存在 `dns.providers.cloudflare`，说明插件已正常加载。
+
+### 16.7 注意事项
+
+- Cloudflare 橙云下请使用支持端口（建议 `8443/2053/2096`）。
+- 如果使用 `9443`、`10443` 这类端口，需要灰云（DNS only）直连。
