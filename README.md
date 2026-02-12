@@ -42,16 +42,32 @@
 
 ## 3. 先决条件（Debian）
 
+命令约定：
+
+- 如果你是 `root`，直接执行命令（不要 `sudo`）。
+- 如果你是普通用户，把文档里的命令前加 `sudo`。
+
+### 3.1 安装 Docker（官方脚本，推荐）
+
 ```bash
-sudo apt update
-sudo apt install -y docker.io docker-compose-plugin rclone fuse3 curl
-sudo systemctl enable --now docker
+curl -fsSL https://get.docker.com -o install-docker.sh
+sh install-docker.sh
+systemctl enable --now docker
+docker --version
+docker compose version
+```
+
+### 3.2 安装 rclone / fuse3 / curl
+
+```bash
+apt update
+apt install -y rclone fuse3 curl
 ```
 
 启用 FUSE 的 `allow_other`：
 
 ```bash
-sudo sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
+sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
 ```
 
 ---
@@ -60,7 +76,7 @@ sudo sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
 
 ```bash
 cd /srv
-sudo mkdir -p arkstack
+mkdir -p arkstack
 cd /srv/arkstack
 # 将本仓库内容放到这里
 ```
@@ -81,13 +97,13 @@ cp .env.example .env
 创建宿主机目录：
 
 ```bash
-sudo mkdir -p /srv/docker/{traefik,openlist,jellyfin/config,jellyfin/cache,qbittorrent}
-sudo mkdir -p /srv/media/{local,incoming}
-sudo mkdir -p /srv/downloads
-sudo mkdir -p /srv/cloud
-sudo mkdir -p /var/cache/rclone
-sudo touch /srv/docker/traefik/acme.json
-sudo chmod 600 /srv/docker/traefik/acme.json
+mkdir -p /srv/docker/{traefik,openlist,jellyfin/config,jellyfin/cache,qbittorrent}
+mkdir -p /srv/media/{local,incoming}
+mkdir -p /srv/downloads
+mkdir -p /srv/cloud
+mkdir -p /var/cache/rclone
+touch /srv/docker/traefik/acme.json
+chmod 600 /srv/docker/traefik/acme.json
 ```
 
 启动：
@@ -160,10 +176,10 @@ rclone lsd openlist:
 把 OpenList 根目录整体挂到 `/srv/cloud`：
 
 ```bash
-sudo cp systemd/rclone-openlist-root.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now rclone-openlist-root
-sudo systemctl status rclone-openlist-root
+cp systemd/rclone-openlist-root.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now rclone-openlist-root
+systemctl status rclone-openlist-root
 ```
 
 验证：
@@ -186,22 +202,22 @@ Jellyfin 里配置媒体库目录：
 先创建目标目录（举例）：
 
 ```bash
-sudo mkdir -p /srv/cloud/{quark,alipan,onedrive}
+mkdir -p /srv/cloud/{quark,alipan,onedrive}
 ```
 
 安装模板服务：
 
 ```bash
-sudo cp systemd/rclone-openlist-drive@.service /etc/systemd/system/
-sudo systemctl daemon-reload
+cp systemd/rclone-openlist-drive@.service /etc/systemd/system/
+systemctl daemon-reload
 ```
 
 为每个网盘启动一个实例（实例名就是 OpenList 里的路径名）：
 
 ```bash
-sudo systemctl enable --now rclone-openlist-drive@quark
-sudo systemctl enable --now rclone-openlist-drive@alipan
-sudo systemctl enable --now rclone-openlist-drive@onedrive
+systemctl enable --now rclone-openlist-drive@quark
+systemctl enable --now rclone-openlist-drive@alipan
+systemctl enable --now rclone-openlist-drive@onedrive
 ```
 
 查看状态：
@@ -215,7 +231,7 @@ systemctl status rclone-openlist-drive@onedrive
 停止某一个：
 
 ```bash
-sudo systemctl disable --now rclone-openlist-drive@onedrive
+systemctl disable --now rclone-openlist-drive@onedrive
 ```
 
 Jellyfin 建议按挂载点分别建库：
@@ -315,4 +331,3 @@ journalctl -u rclone-openlist-root -f
 - `.env.example` 不包含 `ADMIN_USERNAME / ADMIN_PASSWORD`
 - 也不包含 `SEED_ADMIN_FROM_ENV`
 - 仓库只保留“媒体栈部署文件”，不再包含旧的 NAS 面板源码
-
