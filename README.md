@@ -59,8 +59,9 @@
 
 命令约定：
 
-- 如果你是 `root` 用户：命令前不要加 `sudo`
-- 如果你是普通用户：命令前加 `sudo`
+- 本文默认你是普通用户，命令都按 `sudo` 写。
+- `cd` 这类 shell 内建命令不加 `sudo`。
+- 如果你本身是 `root`，可把 `sudo` 去掉。
 
 ---
 
@@ -70,24 +71,25 @@
 
 ```bash
 curl -fsSL https://get.docker.com -o install-docker.sh
-sh install-docker.sh
-systemctl enable --now docker
-docker --version
-docker compose version
+sudo sh install-docker.sh
+sudo systemctl enable --now docker
+sudo docker --version
+sudo docker compose version
 ```
 
 ### 4.2 安装 rclone / fuse3
 
 ```bash
-apt update
-apt install -y rclone fuse3 curl
-sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
+sudo apt update
+sudo apt install -y rclone fuse3 curl
+sudo sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
 ```
 
 ### 4.3 部署目录和配置
 
 ```bash
-mkdir -p /srv/arkstack
+sudo mkdir -p /srv/arkstack
+sudo chown -R "$USER:$USER" /srv/arkstack
 cd /srv/arkstack
 # 把仓库文件放到当前目录（git clone 或上传）
 cp .env.example .env
@@ -102,14 +104,14 @@ cp .env.example .env
 ### 4.4 一条命令创建目录
 
 ```bash
-mkdir -p /srv/docker/{caddy/data,caddy/config,openlist,jellyfin/config,jellyfin/cache,qbittorrent} /srv/media/{local,incoming} /srv/downloads /srv/cloud /var/cache/rclone
+sudo mkdir -p /srv/docker/{caddy/data,caddy/config,openlist,jellyfin/config,jellyfin/cache,qbittorrent} /srv/media/{local,incoming} /srv/downloads /srv/cloud /var/cache/rclone
 ```
 
 ### 4.5 修正目录权限（很重要）
 
 ```bash
-chown -R 1000:1000 /srv/docker/openlist /srv/docker/qbittorrent
-chmod -R u+rwX,g+rwX /srv/docker/openlist /srv/docker/qbittorrent
+sudo chown -R 1000:1000 /srv/docker/openlist /srv/docker/qbittorrent
+sudo chmod -R u+rwX,g+rwX /srv/docker/openlist /srv/docker/qbittorrent
 ```
 
 > 如果你在 `.env` 里改了 `PUID/PGID`，这里对应改成同样的 UID/GID。
@@ -128,8 +130,8 @@ chmod -R u+rwX,g+rwX /srv/docker/openlist /srv/docker/qbittorrent
 ### 4.7 启动
 
 ```bash
-docker compose up -d --build
-docker compose ps
+sudo docker compose up -d --build
+sudo docker compose ps
 ```
 
 ---
@@ -157,7 +159,7 @@ docker compose ps
 - 初始临时密码查看：
 
 ```bash
-docker compose logs qbittorrent | rg "temporary password"
+sudo docker compose logs qbittorrent | rg "temporary password"
 ```
 
 登录后立刻在 qBittorrent 设置里改管理员密码。
@@ -174,7 +176,7 @@ docker compose logs qbittorrent | rg "temporary password"
 ### 6.1 配置 rclone remote
 
 ```bash
-rclone config
+sudo rclone config
 ```
 
 建议参数：
@@ -188,35 +190,35 @@ rclone config
 验证：
 
 ```bash
-rclone lsd openlist:
+sudo rclone lsd openlist:
 ```
 
 ### 6.2 单网盘挂载（根目录）
 
 ```bash
-cp systemd/rclone-openlist-root.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now rclone-openlist-root
-systemctl status rclone-openlist-root
+sudo cp systemd/rclone-openlist-root.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now rclone-openlist-root
+sudo systemctl status rclone-openlist-root
 ```
 
 ### 6.3 多网盘挂载（推荐）
 
 ```bash
-mkdir -p /srv/cloud/{quark,alipan,onedrive}
-cp systemd/rclone-openlist-drive@.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now rclone-openlist-drive@quark
-systemctl enable --now rclone-openlist-drive@alipan
-systemctl enable --now rclone-openlist-drive@onedrive
+sudo mkdir -p /srv/cloud/{quark,alipan,onedrive}
+sudo cp systemd/rclone-openlist-drive@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now rclone-openlist-drive@quark
+sudo systemctl enable --now rclone-openlist-drive@alipan
+sudo systemctl enable --now rclone-openlist-drive@onedrive
 ```
 
 检查：
 
 ```bash
-systemctl status rclone-openlist-drive@quark
-systemctl status rclone-openlist-drive@alipan
-systemctl status rclone-openlist-drive@onedrive
+sudo systemctl status rclone-openlist-drive@quark
+sudo systemctl status rclone-openlist-drive@alipan
+sudo systemctl status rclone-openlist-drive@onedrive
 ls -lah /srv/cloud
 ```
 
@@ -227,21 +229,21 @@ ls -lah /srv/cloud
 ### 7.1 查看新盘
 
 ```bash
-lsblk -f
+sudo lsblk -f
 ```
 
 ### 7.2 格式化（仅新盘，慎用）
 
 ```bash
-mkfs.ext4 /dev/nvme1n1p1
+sudo mkfs.ext4 /dev/nvme1n1p1
 ```
 
 ### 7.3 挂载并加入开机自动挂载
 
 ```bash
-mkdir -p /mnt/ssd
-mount /dev/nvme1n1p1 /mnt/ssd
-blkid /dev/nvme1n1p1
+sudo mkdir -p /mnt/ssd
+sudo mount /dev/nvme1n1p1 /mnt/ssd
+sudo blkid /dev/nvme1n1p1
 ```
 
 将 UUID 写入 `/etc/fstab`（示例）：
@@ -253,8 +255,8 @@ UUID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx /mnt/ssd ext4 defaults,nofail 0 2
 验证：
 
 ```bash
-umount /mnt/ssd
-mount -a
+sudo umount /mnt/ssd
+sudo mount -a
 df -h | grep /mnt/ssd
 ```
 
@@ -269,7 +271,7 @@ df -h | grep /mnt/ssd
 重启：
 
 ```bash
-docker compose up -d jellyfin
+sudo docker compose up -d jellyfin
 ```
 
 然后在 Jellyfin 库中添加多个路径，例如同一个 TV 库同时包含：
@@ -297,8 +299,8 @@ docker compose up -d jellyfin
 - 对需要写入的挂载目录执行：
 
 ```bash
-chown -R 1000:1000 <目录>
-chmod -R u+rwX,g+rwX <目录>
+sudo chown -R 1000:1000 <目录>
+sudo chmod -R u+rwX,g+rwX <目录>
 ```
 
 ### 8.2 同一个文件夹/磁盘能给多个容器吗？
@@ -324,6 +326,55 @@ jellyfin:
 
 这就是生产中最常见、最安全的共享方式。
 
+### 8.3 把挂载网盘直接给 Jellyfin
+
+支持，当前 compose 已经包含：
+
+```yaml
+- ${CLOUD_MOUNT_ROOT}:/media/cloud:ro
+```
+
+也就是宿主机 `/srv/cloud`（rclone 挂载点）会映射到 Jellyfin 的 `/media/cloud`。  
+你只需要在 Jellyfin 后台给媒体库增加路径，例如：
+
+- `/media/cloud/quark/TV`
+- `/media/cloud/alipan/Movies`
+
+验证容器内是否可见：
+
+```bash
+sudo docker compose exec jellyfin ls -lah /media/cloud
+```
+
+### 8.4 网盘写入数据（可写场景）
+
+支持，但要区分两类：
+
+1. 普通文件复制/整理：可以写入网盘挂载目录（`/srv/cloud/...`）。
+2. BT 直接下载到网盘：不推荐，随机写多，容易触发云盘限速/失败。
+
+推荐方案（生产更稳）：
+
+- qBittorrent 写本地盘：`/srv/downloads`
+- 下载完成后再用 `rclone move/copy` 推送到网盘
+
+示例（手动推送）：
+
+```bash
+sudo rclone move /srv/downloads openlist:/quark/downloads --progress --transfers 4 --checkers 8
+```
+
+如果你明确要“容器直接写网盘目录”，也可以把目录以 `rw` 挂给写入容器，例如：
+
+```yaml
+qbittorrent:
+  volumes:
+    - /srv/cloud/quark:/downloads-cloud
+```
+
+然后在 qBittorrent 里把保存路径改成 `/downloads-cloud`。  
+同时建议保留 Jellyfin 对同目录 `:ro` 只读挂载。
+
 ---
 
 ## 9. 故障排查（你日志里的两个典型错误）
@@ -333,10 +384,10 @@ jellyfin:
 处理：
 
 ```bash
-mkdir -p /srv/docker/openlist
-chown -R 1000:1000 /srv/docker/openlist
-chmod -R u+rwX,g+rwX /srv/docker/openlist
-docker compose up -d --force-recreate openlist
+sudo mkdir -p /srv/docker/openlist
+sudo chown -R 1000:1000 /srv/docker/openlist
+sudo chmod -R u+rwX,g+rwX /srv/docker/openlist
+sudo docker compose up -d --force-recreate openlist
 ```
 
 并确认 `docker-compose.yml` 是：
@@ -359,7 +410,7 @@ environment:
 - 然后重建：
 
 ```bash
-docker compose up -d --force-recreate watchtower
+sudo docker compose up -d --force-recreate watchtower
 ```
 
 ---
@@ -370,18 +421,18 @@ docker compose up -d --force-recreate watchtower
 
 ```bash
 cd /srv/arkstack
-docker compose down --remove-orphans
-docker compose pull
-docker compose up -d --build
+sudo docker compose down --remove-orphans
+sudo docker compose pull
+sudo docker compose up -d --build
 ```
 
 ### 10.2 全量清空重装（危险）
 
 ```bash
 cd /srv/arkstack
-docker compose down -v --remove-orphans
+sudo docker compose down -v --remove-orphans
 # 确认你不需要旧数据后再执行
-rm -rf /srv/docker/caddy /srv/docker/openlist /srv/docker/jellyfin /srv/docker/qbittorrent
+sudo rm -rf /srv/docker/caddy /srv/docker/openlist /srv/docker/jellyfin /srv/docker/qbittorrent
 ```
 
 然后回到“第 4 章 从零部署”。
@@ -392,24 +443,24 @@ rm -rf /srv/docker/caddy /srv/docker/openlist /srv/docker/jellyfin /srv/docker/q
 
 ```bash
 # 查看状态
-docker compose ps
+sudo docker compose ps
 
 # 查看日志
-docker compose logs -f caddy
-docker compose logs -f openlist
-docker compose logs -f jellyfin
-docker compose logs -f qbittorrent
-docker compose logs -f watchtower
+sudo docker compose logs -f caddy
+sudo docker compose logs -f openlist
+sudo docker compose logs -f jellyfin
+sudo docker compose logs -f qbittorrent
+sudo docker compose logs -f watchtower
 
 # 重启单服务
-docker compose up -d --force-recreate openlist
+sudo docker compose up -d --force-recreate openlist
 
 # 拉取并更新
-docker compose pull
-docker compose up -d
+sudo docker compose pull
+sudo docker compose up -d
 
 # 查看 Caddy 是否含 cloudflare dns 模块
-docker compose exec caddy caddy list-modules | rg cloudflare
+sudo docker compose exec caddy caddy list-modules | rg cloudflare
 ```
 
 ---
@@ -421,4 +472,3 @@ docker compose exec caddy caddy list-modules | rg cloudflare
 - Jellyfin 对网盘目录建议 `:ro` 只读
 - 公网场景建议叠加 Fail2ban / CrowdSec / Cloudflare Access
 - qBittorrent 首次登录后立即修改管理员密码
-
