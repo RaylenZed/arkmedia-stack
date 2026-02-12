@@ -20,7 +20,8 @@ router.post(
   "/login",
   asyncHandler(async (req, res) => {
     const accessPorts = getAccessPorts();
-    if (accessPorts.forceHttpsAuth || config.forceHttpsAuth) {
+    const forceHttpsAuth = accessPorts.forceHttpsAuth || config.forceHttpsAuth;
+    if (forceHttpsAuth) {
       const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "").toLowerCase();
       const isSecure = req.secure || proto === "https";
       if (!isSecure) {
@@ -28,13 +29,19 @@ router.post(
       }
     }
 
+    const proto = String(req.headers["x-forwarded-proto"] || req.protocol || "").toLowerCase();
+    const isSecure = req.secure || proto === "https";
+    // Bootstrap mode: when HTTPS is not enforced, allow plaintext login payload on HTTP
+    // as a compatibility fallback. In production/public access, enable FORCE_HTTPS_AUTH.
+    const allowPlaintextOnThisRequest = config.allowPlainLoginPayload || (!forceHttpsAuth && !isSecure);
+
     const { username, password, passwordEncrypted, keyId, algorithm } = req.body || {};
     const finalPassword = decodeLoginPassword({
       password,
       passwordEncrypted,
       keyId,
       algorithm,
-      allowPlaintext: config.allowPlainLoginPayload
+      allowPlaintext: allowPlaintextOnThisRequest
     });
     if (!username || !finalPassword) throw new HttpError(400, "用户名和密码必填");
     const user = loginUser(String(username), String(finalPassword));
