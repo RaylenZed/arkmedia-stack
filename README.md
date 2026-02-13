@@ -43,6 +43,8 @@
 ├── Dockerfile.caddy
 ├── Caddyfile
 ├── README.md
+├── scripts
+│   └── add-mount.sh
 └── systemd
     ├── rclone-openlist-root.service
     └── rclone-openlist-drive@.service
@@ -93,6 +95,8 @@ cp .env.example .env
 - `BASE_DOMAIN=pve.example.com`
 - `ACME_EMAIL=you@example.com`
 - `CF_DNS_API_TOKEN=...`
+- `PUID/PGID`（qB 等容器目录权限）
+- `OPENLIST_UID/OPENLIST_GID`（OpenList 运行用户，建议与 `PUID/PGID` 一致）
 
 ### 4.4 手动初始化目录与权限
 
@@ -105,7 +109,39 @@ sudo chmod 755 /srv /srv/docker
 
 如果你把 `.env` 里的 `PUID/PGID` 改成其他值，`chown` 也要改成对应 UID/GID。
 
-### 4.5 启动服务
+### 4.5 逐目录权限命令（细化版）
+
+以下命令按默认 UID/GID `1000:1000` 示例，你可替换为自己的值：
+
+```bash
+# Caddy
+sudo install -d -m 755 -o root -g root /srv/docker/caddy
+sudo install -d -m 755 -o root -g root /srv/docker/caddy/data
+sudo install -d -m 755 -o root -g root /srv/docker/caddy/config
+
+# OpenList（重点）
+sudo install -d -m 775 -o 1000 -g 1000 /srv/docker/openlist
+sudo chmod 755 /srv /srv/docker
+sudo namei -l /srv/docker/openlist
+sudo docker run --rm -u 1000:1000 -v /srv/docker/openlist:/data alpine sh -c 'touch /data/.perm-check && ls -l /data/.perm-check'
+
+# Jellyfin
+sudo install -d -m 755 -o root -g root /srv/docker/jellyfin
+sudo install -d -m 775 -o 1000 -g 1000 /srv/docker/jellyfin/config
+sudo install -d -m 775 -o 1000 -g 1000 /srv/docker/jellyfin/cache
+
+# qBittorrent
+sudo install -d -m 775 -o 1000 -g 1000 /srv/docker/qbittorrent
+sudo install -d -m 775 -o 1000 -g 1000 /srv/downloads
+sudo install -d -m 775 -o 1000 -g 1000 /srv/media/incoming
+
+# 影视库与网盘挂载点
+sudo install -d -m 755 -o root -g root /srv/media/local
+sudo install -d -m 755 -o root -g root /srv/cloud
+sudo install -d -m 755 -o root -g root /var/cache/rclone
+```
+
+### 4.6 启动服务
 
 ```bash
 sudo docker compose up -d --build
@@ -346,9 +382,53 @@ environment:
 sudo docker compose up -d --force-recreate watchtower
 ```
 
+### 9.4 OpenList 502（Caddy 日志 no such host）
+
+如果 Caddy 日志出现 `lookup openlist ... no such host`，说明 OpenList 容器没有正常运行（通常是前面的权限错误）。
+
+按顺序执行：
+
+```bash
+cd /srv/arkstack
+OPENLIST_DATA=$(awk -F= '/^OPENLIST_DATA=/{print $2}' .env)
+sudo install -d -m 775 -o 1000 -g 1000 "$OPENLIST_DATA"
+sudo docker compose up -d --force-recreate openlist
+sudo docker compose ps
+sudo docker compose logs --tail=120 openlist
+```
+
+OpenList 正常后，`https://<domain>:<OPENLIST_HTTPS_PORT>` 的 502 会消失。
+
 ---
 
-## 10. 媒体服务选择（Jellyfin / Emby）
+## 10. 交互式新增挂载脚本
+
+你可以用下面脚本为指定容器新增挂载目录（不会直接改主 `docker-compose.yml`，而是写入 `docker-compose.override.yml`）：
+
+```bash
+cd /srv/arkstack
+chmod +x scripts/add-mount.sh
+sudo ./scripts/add-mount.sh
+```
+
+脚本流程：
+
+1. 列出当前 compose 服务并让你选择
+2. 输入宿主机路径和容器内路径
+3. 选择 `rw/ro`
+4. 自动创建目录并设置权限（默认只处理目录本身，不递归）
+5. 写入 `docker-compose.override.yml`
+6. 重建你选择的容器
+
+数据影响说明：
+
+- 不会删除宿主机已有数据
+- 但如果你把挂载目标设为容器内已有文件目录，该目录原内容会被“覆盖隐藏”（不是删除）
+- OpenList 禁止挂到 `/opt/openlist/data` 下方，避免再次触发启动权限检查失败
+
+---
+
+## 11. 媒体服务选择（Jellyfin / Emby）
 
 - Jellyfin：开源免费、无授权限制，适合你当前目标。
 - Emby：基础可用，高级能力通常需要 Premiere（付费）。
@@ -357,7 +437,7 @@ sudo docker compose up -d --force-recreate watchtower
 
 ---
 
-## 11. 运维命令
+## 12. 运维命令
 
 ```bash
 # 状态
@@ -383,7 +463,7 @@ sudo docker compose exec caddy caddy list-modules | rg cloudflare
 
 ---
 
-## 12. 重新部署
+## 13. 重新部署
 
 ### 保留数据重装
 
@@ -404,7 +484,7 @@ sudo rm -rf /srv/docker/caddy /srv/docker/openlist /srv/docker/jellyfin /srv/doc
 
 ---
 
-## 13. 安全建议
+## 14. 安全建议
 
 - `CF_DNS_API_TOKEN` 最小权限：`Zone.DNS:Edit` + `Zone:Read`
 - OpenList WebDAV 仅本地监听（`127.0.0.1:25244`）

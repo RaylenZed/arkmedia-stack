@@ -36,10 +36,10 @@ services:
     image: openlistteam/openlist:latest
     container_name: arkmedia-openlist
     restart: unless-stopped
+    user: "${OPENLIST_UID}:${OPENLIST_GID}"
     environment:
       - TZ=${TZ}
-      - PUID=${PUID}
-      - PGID=${PGID}
+      - UMASK=022
     volumes:
       - ${OPENLIST_DATA}:/opt/openlist/data
     ports:
