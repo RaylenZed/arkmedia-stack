@@ -44,7 +44,8 @@
 ├── Caddyfile
 ├── README.md
 ├── scripts
-│   └── add-mount.sh
+│   ├── add-mount.sh
+│   └── reset-stack.sh
 └── systemd
     ├── rclone-openlist-root.service
     └── rclone-openlist-drive@.service
@@ -348,13 +349,19 @@ sudo docker compose up -d --force-recreate openlist
 ```bash
 cd /srv/arkstack
 QBIT_CONFIG=$(awk -F= '/^QBIT_CONFIG=/{print $2}' .env)
+BASE_DOMAIN=$(awk -F= '/^BASE_DOMAIN=/{print $2}' .env)
+QBIT_PORT=$(awk -F= '/^QBIT_HTTPS_PORT=/{print $2}' .env)
 sudo mkdir -p "$QBIT_CONFIG/qBittorrent"
-sudo touch "$QBIT_CONFIG/qBittorrent/qBittorrent.conf"
-sudo tee -a "$QBIT_CONFIG/qBittorrent/qBittorrent.conf" >/dev/null <<'EOF'
-
-WebUI\ReverseProxySupportEnabled=true
-WebUI\HostHeaderValidation=false
-WebUI\CSRFProtection=false
+sudo tee "$QBIT_CONFIG/qBittorrent/qBittorrent.conf" >/dev/null <<EOF
+[Preferences]
+WebUI\\Address=*
+WebUI\\Port=8080
+WebUI\\HostHeaderValidation=false
+WebUI\\CSRFProtection=false
+WebUI\\ReverseProxySupportEnabled=true
+WebUI\\ServerDomains=${BASE_DOMAIN};${BASE_DOMAIN}:${QBIT_PORT}
+WebUI\\TrustedReverseProxies=127.0.0.1/8;172.16.0.0/12;192.168.0.0/16
+WebUI\\AlternativeUIEnabled=false
 EOF
 sudo chown -R 1000:1000 "$QBIT_CONFIG"
 sudo chmod -R u+rwX,g+rwX "$QBIT_CONFIG"
@@ -396,6 +403,15 @@ sudo docker compose up -d --force-recreate qbittorrent caddy
 ```
 
 再用无痕窗口访问并登录，避免旧 cookie 影响。
+
+快速验证静态资源是否恢复：
+
+```bash
+cd /srv/arkstack
+BASE_DOMAIN=$(awk -F= '/^BASE_DOMAIN=/{print $2}' .env)
+QBIT_PORT=$(awk -F= '/^QBIT_HTTPS_PORT=/{print $2}' .env)
+curl -kI --resolve "${BASE_DOMAIN}:${QBIT_PORT}:127.0.0.1" "https://${BASE_DOMAIN}:${QBIT_PORT}/images/qbittorrent32.png"
+```
 
 ### 9.3 Watchtower 报 Docker API 版本过旧
 
@@ -458,7 +474,31 @@ sudo ./scripts/add-mount.sh
 
 ---
 
-## 11. 媒体服务选择（Jellyfin / Emby）
+## 11. 临时脚本：一键重置并重装
+
+如果你要“把当前栈全部清空再重装”，使用：
+
+```bash
+cd /srv/arkstack
+chmod +x scripts/reset-stack.sh
+sudo ./scripts/reset-stack.sh
+```
+
+脚本会交互确认并支持三种级别：
+
+1. 仅清理本项目容器/网络/卷（默认）
+2. 额外清理本项目镜像
+3. 可选全局 Docker prune（影响本机所有项目）
+
+说明：
+
+- 不会自动删除 `/vol1`、`/srv/media/local`、`/srv/cloud`
+- 会删除 `docker-compose.override.yml` 与 `.mounts.state`
+- 清空后按 README 第 4 章重新部署
+
+---
+
+## 12. 媒体服务选择（Jellyfin / Emby）
 
 - Jellyfin：开源免费、无授权限制，适合你当前目标。
 - Emby：基础可用，高级能力通常需要 Premiere（付费）。
@@ -467,7 +507,7 @@ sudo ./scripts/add-mount.sh
 
 ---
 
-## 12. 运维命令
+## 13. 运维命令
 
 ```bash
 # 状态
@@ -493,7 +533,7 @@ sudo docker compose exec caddy caddy list-modules | rg cloudflare
 
 ---
 
-## 13. 重新部署
+## 14. 重新部署
 
 ### 保留数据重装
 
@@ -514,7 +554,7 @@ sudo rm -rf /srv/docker/caddy /srv/docker/openlist /srv/docker/jellyfin /srv/doc
 
 ---
 
-## 14. 安全建议
+## 15. 安全建议
 
 - `CF_DNS_API_TOKEN` 最小权限：`Zone.DNS:Edit` + `Zone:Read`
 - OpenList WebDAV 仅本地监听（`127.0.0.1:25244`）

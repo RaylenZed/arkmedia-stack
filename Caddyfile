@@ -4,13 +4,7 @@
 }
 
 {$BASE_DOMAIN}:{$JELLYFIN_HTTPS_PORT} {
-    reverse_proxy jellyfin:8096 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto https
-        header_up X-Forwarded-Host {host}
-    }
+    reverse_proxy jellyfin:8096
 }
 
 {$BASE_DOMAIN}:{$QBIT_HTTPS_PORT} {
@@ -27,11 +21,5 @@
 }
 
 {$BASE_DOMAIN}:{$OPENLIST_HTTPS_PORT} {
-    reverse_proxy openlist:5244 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto https
-        header_up X-Forwarded-Host {host}
-    }
+    reverse_proxy openlist:5244
 }
