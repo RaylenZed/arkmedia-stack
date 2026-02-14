@@ -15,10 +15,12 @@ services:
       - EMBY_HTTPS_PORT=${EMBY_HTTPS_PORT}
       - QBIT_HTTPS_PORT=${QBIT_HTTPS_PORT}
       - OPENLIST_HTTPS_PORT=${OPENLIST_HTTPS_PORT}
+      - DIFY_HTTPS_PORT=${DIFY_HTTPS_PORT}
     ports:
       - "${EMBY_HTTPS_PORT}:${EMBY_HTTPS_PORT}"
       - "${QBIT_HTTPS_PORT}:${QBIT_HTTPS_PORT}"
       - "${OPENLIST_HTTPS_PORT}:${OPENLIST_HTTPS_PORT}"
+      - "${DIFY_HTTPS_PORT}:${DIFY_HTTPS_PORT}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${CADDY_DATA}:/data

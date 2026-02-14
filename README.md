@@ -5,6 +5,7 @@
 - OpenList（网盘聚合）
 - Emby（媒体库/播放）
 - qBittorrent（下载）
+- Dify（AI 应用平台）
 - Caddy（统一 HTTPS 入口，Cloudflare DNS 证书）
 - Watchtower（自动更新）
 - rclone + systemd（把 OpenList 挂载到宿主机）
@@ -43,6 +44,13 @@
 │   ├── .env
 │   ├── .env.example
 │   └── init/10-reverse-proxy.sh
+├── dify/
+│   ├── docker-compose.yml
+│   ├── .env
+│   ├── .env.example
+│   ├── nginx/
+│   ├── ssrf_proxy/
+│   └── certbot/
 ├── watchtower/
 │   ├── docker-compose.yml
 │   ├── .env
@@ -59,7 +67,7 @@
 
 - Debian 12/13
 - Cloudflare 托管域名（例如 `pve.example.com`）
-- 放行你自定义端口（示例：8443/2053/2096）
+- 放行你自定义端口（示例：8443/2053/2096/3053）
 
 ---
 
@@ -95,6 +103,7 @@ cp gateway/.env.example gateway/.env
 cp openlist/.env.example openlist/.env
 cp emby/.env.example emby/.env
 cp qbittorrent/.env.example qbittorrent/.env
+cp dify/.env.example dify/.env
 cp watchtower/.env.example watchtower/.env
 ```
 
@@ -107,7 +116,7 @@ cp watchtower/.env.example watchtower/.env
 - `BASE_DOMAIN`
 - `ACME_EMAIL`
 - `CF_DNS_API_TOKEN`
-- `EMBY_HTTPS_PORT` / `QBIT_HTTPS_PORT` / `OPENLIST_HTTPS_PORT`
+- `EMBY_HTTPS_PORT` / `QBIT_HTTPS_PORT` / `OPENLIST_HTTPS_PORT` / `DIFY_HTTPS_PORT`
 - `ARK_NETWORK`
 
 ### 5.2 `openlist/.env`
@@ -139,6 +148,14 @@ cp watchtower/.env.example watchtower/.env
 - `WATCHTOWER_INTERVAL`
 - `ARK_NETWORK`（一致）
 
+### 5.6 `dify/.env`
+
+- `BASE_DOMAIN` / `DIFY_HTTPS_PORT`（必须与 `gateway/.env` 对齐）
+- `CONSOLE_API_URL` / `CONSOLE_WEB_URL` / `SERVICE_API_URL` / `APP_API_URL` / `APP_WEB_URL` / `FILES_URL`
+- `SECRET_KEY`
+- `EXPOSE_NGINX_PORT` / `EXPOSE_NGINX_SSL_PORT`（建议仅 127.0.0.1 监听）
+- `ARK_NETWORK`（一致）
+
 ---
 
 ## 6. 初始化目录与权限
@@ -162,6 +179,8 @@ sudo chmod -R u+rwX,g+rwX /srv/docker/openlist /srv/docker/emby /srv/docker/qbit
 sudo chmod 755 /srv /srv/docker /srv/media /srv/cloud /var/cache/rclone
 ```
 
+说明：Dify 使用官方 compose，数据默认落在 `/srv/arkstack/dify/volumes`（相对 `dify/` 目录）。
+
 ---
 
 ## 7. 启动与访问
@@ -181,6 +200,7 @@ sudo ./scripts/stack.sh ps
 - Emby: `https://pve.example.com:8443`
 - qBittorrent: `https://pve.example.com:2053`
 - OpenList: `https://pve.example.com:2096`
+- Dify: `https://pve.example.com:3053`
 
 Cloudflare DNS：
 
@@ -215,6 +235,12 @@ Cloudflare DNS：
 ```bash
 sudo docker compose --env-file /srv/arkstack/qbittorrent/.env -f /srv/arkstack/qbittorrent/docker-compose.yml logs qbittorrent | rg -i "temporary password|administrator password"
 ```
+
+### 8.4 Dify
+
+1. 访问 `https://pve.example.com:3053`
+2. 注册首个管理员账号
+3. 进入设置配置模型供应商（OpenAI/火山/硅基流动等）
 
 ---
 
@@ -330,6 +356,7 @@ sudo ./scripts/stack.sh logs gateway
 sudo ./scripts/stack.sh logs openlist
 sudo ./scripts/stack.sh logs emby
 sudo ./scripts/stack.sh logs qbittorrent
+sudo ./scripts/stack.sh logs dify
 
 # 单栈重启
 sudo ./scripts/stack.sh restart emby

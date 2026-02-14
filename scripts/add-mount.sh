@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STACKS=(gateway openlist emby qbittorrent watchtower)
+STACKS=(gateway openlist emby qbittorrent dify watchtower)
 
 run_root() {
   if [[ "${EUID}" -eq 0 ]]; then

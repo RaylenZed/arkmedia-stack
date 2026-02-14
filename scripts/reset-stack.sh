@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STACKS=(gateway openlist emby qbittorrent watchtower)
+STACKS=(gateway openlist emby qbittorrent dify watchtower)
 
 run_root() {
   if [[ "${EUID}" -eq 0 ]]; then
@@ -92,6 +92,7 @@ fi
 if [[ "${REMOVE_DATA}" == "y" || "${REMOVE_DATA}" == "Y" ]]; then
   echo "Step 3/4: removing data directories"
   run_root rm -rf /srv/docker/caddy /srv/docker/openlist /srv/docker/emby /srv/docker/qbittorrent
+  run_root rm -rf "${ROOT_DIR}/dify/volumes"
   run_root rm -rf /srv/downloads /srv/media/incoming
   echo "Kept /srv/media/local, /srv/cloud, /vol1 by default."
 else
@@ -117,5 +118,6 @@ echo "  cp gateway/.env.example gateway/.env"
 echo "  cp openlist/.env.example openlist/.env"
 echo "  cp emby/.env.example emby/.env"
 echo "  cp qbittorrent/.env.example qbittorrent/.env"
+echo "  cp dify/.env.example dify/.env"
 echo "  cp watchtower/.env.example watchtower/.env"
 echo "  sudo ./scripts/stack.sh up"

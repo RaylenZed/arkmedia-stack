@@ -19,3 +19,7 @@
 {$BASE_DOMAIN}:{$OPENLIST_HTTPS_PORT} {
     reverse_proxy openlist:5244
 }
+
+{$BASE_DOMAIN}:{$DIFY_HTTPS_PORT} {
+    reverse_proxy arkmedia-dify-nginx:80
+}
