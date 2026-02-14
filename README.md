@@ -490,10 +490,19 @@ sudo ./scripts/stack.sh restart openlist
 仍异常时：
 
 ```bash
+# 1) 确认域名与反代端口匹配（非常关键）
+grep -E '^(BASE_DOMAIN|QBIT_HTTPS_PORT|ARK_NETWORK)=' /srv/arkos/qbittorrent/.env
+grep -E '^(BASE_DOMAIN|QBIT_HTTPS_PORT|ARK_NETWORK)=' /srv/arkos/gateway/.env
+
+# 2) 重建 qB 与 gateway（会重新写入 qBittorrent.conf 反代参数）
 sudo ./scripts/stack.sh restart qbittorrent
 sudo ./scripts/stack.sh restart gateway
+
+# 3) 查看 qB 日志
 sudo docker compose --env-file /srv/arkos/qbittorrent/.env -f /srv/arkos/qbittorrent/docker-compose.yml logs qbittorrent --tail=120
 ```
+
+浏览器侧请同时清理 `https://<BASE_DOMAIN>:<QBIT_HTTPS_PORT>` 的站点 Cookie 后再登录一次。
 
 ---
 
