@@ -1,0 +1,25 @@
+name: arkmedia-watchtower
+
+services:
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: arkmedia-watchtower
+    restart: unless-stopped
+    command:
+      - --label-enable
+      - --cleanup
+      - --interval
+      - "${WATCHTOWER_INTERVAL}"
+    environment:
+      - DOCKER_API_VERSION=1.44
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    networks:
+      - media_net
+
+networks:
+  media_net:
+    external: true
+    name: ${ARK_NETWORK}

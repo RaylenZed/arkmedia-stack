@@ -1,0 +1,34 @@
+name: arkmedia-gateway
+
+services:
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    container_name: arkmedia-caddy
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN}
+      - BASE_DOMAIN=${BASE_DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+      - EMBY_HTTPS_PORT=${EMBY_HTTPS_PORT}
+      - QBIT_HTTPS_PORT=${QBIT_HTTPS_PORT}
+      - OPENLIST_HTTPS_PORT=${OPENLIST_HTTPS_PORT}
+    ports:
+      - "${EMBY_HTTPS_PORT}:${EMBY_HTTPS_PORT}"
+      - "${QBIT_HTTPS_PORT}:${QBIT_HTTPS_PORT}"
+      - "${OPENLIST_HTTPS_PORT}:${OPENLIST_HTTPS_PORT}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${CADDY_DATA}:/data
+      - ${CADDY_CONFIG}:/config
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    networks:
+      - media_net
+
+networks:
+  media_net:
+    external: true
+    name: ${ARK_NETWORK}

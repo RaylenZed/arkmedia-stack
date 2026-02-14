@@ -1,0 +1,27 @@
+name: arkmedia-emby
+
+services:
+  emby:
+    image: emby/embyserver:latest
+    container_name: arkmedia-emby
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - UID=${PUID}
+      - GID=${PGID}
+    volumes:
+      - ${EMBY_CONFIG}:/config
+      - ${MEDIA_LOCAL_PATH}:/media/local:ro
+      - ${MEDIA_INCOMING_PATH}:/media/incoming
+      - ${CLOUD_MOUNT_ROOT}:/media/cloud:ro
+    ports:
+      - "127.0.0.1:${EMBY_LOCAL_PORT}:8096"
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    networks:
+      - media_net
+
+networks:
+  media_net:
+    external: true
+    name: ${ARK_NETWORK}

@@ -1,0 +1,33 @@
+name: arkmedia-qbittorrent
+
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: arkmedia-qbittorrent
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=${QBIT_PEER_PORT}
+      - BASE_DOMAIN=${BASE_DOMAIN}
+      - QBIT_HTTPS_PORT=${QBIT_HTTPS_PORT}
+    volumes:
+      - ${QBIT_CONFIG}:/config
+      - ${DOWNLOADS_PATH}:/downloads
+      - ${MEDIA_INCOMING_PATH}:/media/incoming
+      - ./init/10-reverse-proxy.sh:/custom-cont-init.d/10-reverse-proxy.sh:ro
+    ports:
+      - "${QBIT_PEER_PORT}:${QBIT_PEER_PORT}/tcp"
+      - "${QBIT_PEER_PORT}:${QBIT_PEER_PORT}/udp"
+      - "127.0.0.1:${QBIT_LOCAL_PORT}:8080"
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    networks:
+      - media_net
+
+networks:
+  media_net:
+    external: true
+    name: ${ARK_NETWORK}

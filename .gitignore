@@ -11,5 +11,5 @@ coverage/
 *.sqlite3
 data/
 secrets/
-docker-compose.override.yml
-.mounts.state
+**/docker-compose.override.yml
+**/.mounts.state

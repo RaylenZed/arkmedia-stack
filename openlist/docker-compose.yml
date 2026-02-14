@@ -1,0 +1,24 @@
+name: arkmedia-openlist
+
+services:
+  openlist:
+    image: openlistteam/openlist:latest
+    container_name: arkmedia-openlist
+    restart: unless-stopped
+    user: "${OPENLIST_UID}:${OPENLIST_GID}"
+    environment:
+      - TZ=${TZ}
+      - UMASK=022
+    volumes:
+      - ${OPENLIST_DATA}:/opt/openlist/data
+    ports:
+      - "127.0.0.1:${OPENLIST_LOCAL_PORT}:5244"
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    networks:
+      - media_net
+
+networks:
+  media_net:
+    external: true
+    name: ${ARK_NETWORK}
