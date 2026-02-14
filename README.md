@@ -21,7 +21,7 @@
 ## 1. 目录结构
 
 ```text
-/srv/arkstack
+/srv/arkos
 ├── gateway/
 │   ├── docker-compose.yml
 │   ├── .env
@@ -81,8 +81,11 @@ sudo docker --version
 sudo docker compose version
 
 sudo apt update
-sudo apt install -y rclone fuse3 curl
+sudo apt install -y fuse3 curl
 sudo sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
+
+sudo -v ; curl https://rclone.org/install.sh | sudo bash
+
 ```
 
 ---
@@ -90,10 +93,10 @@ sudo sed -i 's/^#user_allow_other/user_allow_other/' /etc/fuse.conf
 ## 4. 初始化项目
 
 ```bash
-sudo mkdir -p /srv/arkstack
-sudo chown -R "$USER:$USER" /srv/arkstack
-cd /srv/arkstack
-sudo git clone https://github.com/RaylenZed/arkmedia-stack.git .
+sudo mkdir -p /srv/arkos
+sudo chown -R "$USER:$USER" /srv/arkos
+cd /srv/arkos
+sudo git clone https://github.com/RaylenZed/arkos.git .
 ```
 
 复制每个 stack 的环境变量模板：
@@ -179,7 +182,7 @@ sudo chmod -R u+rwX,g+rwX /srv/docker/openlist /srv/docker/emby /srv/docker/qbit
 sudo chmod 755 /srv /srv/docker /srv/media /srv/cloud /var/cache/rclone
 ```
 
-说明：Dify 使用官方 compose，数据默认落在 `/srv/arkstack/dify/volumes`（相对 `dify/` 目录）。
+说明：Dify 使用官方 compose，数据默认落在 `/srv/arkos/dify/volumes`（相对 `dify/` 目录）。
 
 ---
 
@@ -188,7 +191,7 @@ sudo chmod 755 /srv /srv/docker /srv/media /srv/cloud /var/cache/rclone
 ### 7.1 启动全部
 
 ```bash
-cd /srv/arkstack
+cd /srv/arkos
 sudo ./scripts/stack.sh up
 sudo ./scripts/stack.sh ps
 ```
@@ -233,7 +236,7 @@ Cloudflare DNS：
 3. 查看临时密码：
 
 ```bash
-sudo docker compose --env-file /srv/arkstack/qbittorrent/.env -f /srv/arkstack/qbittorrent/docker-compose.yml logs qbittorrent | rg -i "temporary password|administrator password"
+sudo docker compose --env-file /srv/arkos/qbittorrent/.env -f /srv/arkos/qbittorrent/docker-compose.yml logs qbittorrent | rg -i "temporary password|administrator password"
 ```
 
 ### 8.4 Dify
@@ -271,7 +274,7 @@ sudo rclone --config /etc/rclone/rclone.conf lsd openlist:
 ### 9.2 单挂载根目录
 
 ```bash
-cd /srv/arkstack
+cd /srv/arkos
 sudo cp openlist/systemd/rclone-openlist-root.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now rclone-openlist-root
@@ -282,7 +285,7 @@ sudo systemctl status rclone-openlist-root
 
 ```bash
 sudo mkdir -p /srv/cloud/{quark,alipan,onedrive}
-cd /srv/arkstack
+cd /srv/arkos
 sudo cp openlist/systemd/rclone-openlist-drive@.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now rclone-openlist-drive@quark
@@ -325,7 +328,7 @@ df -h | grep /mnt/ssd
 
 可用 `add-mount.sh` 交互添加，或手工写：
 
-`/srv/arkstack/emby/docker-compose.override.yml`
+`/srv/arkos/emby/docker-compose.override.yml`
 
 ```yaml
 services:
@@ -387,7 +390,7 @@ sudo ./scripts/reset-stack.sh
 ### 13.1 OpenList 权限报错
 
 ```bash
-source /srv/arkstack/openlist/.env
+source /srv/arkos/openlist/.env
 sudo mkdir -p "$OPENLIST_DATA"
 sudo chown -R "$OPENLIST_UID:$OPENLIST_GID" "$OPENLIST_DATA"
 sudo chmod -R u+rwX,g+rwX "$OPENLIST_DATA"
@@ -403,7 +406,7 @@ sudo ./scripts/stack.sh restart openlist
 ```bash
 sudo ./scripts/stack.sh restart qbittorrent
 sudo ./scripts/stack.sh restart gateway
-sudo docker compose --env-file /srv/arkstack/qbittorrent/.env -f /srv/arkstack/qbittorrent/docker-compose.yml logs qbittorrent --tail=120
+sudo docker compose --env-file /srv/arkos/qbittorrent/.env -f /srv/arkos/qbittorrent/docker-compose.yml logs qbittorrent --tail=120
 ```
 
 ---
